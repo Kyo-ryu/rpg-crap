@@ -9,7 +9,6 @@ public class randomizedrpg {
     static final Random RNG = new Random();
     static final Scanner SC = new Scanner(System.in);
     static final String LINE = "==========================================";
-    static final String AREA_NAME = "Forest";
 
     static final String[] STAT_NAMES = { "Strength", "Dexterity", "Constitution", "Intelligence", "Wisdom", "Luck" };
     static final int STR = 0, DEX = 1, CON = 2, INT = 3, WIS = 4, LCK = 5;
@@ -18,7 +17,7 @@ public class randomizedrpg {
     static final int MAX_DAMAGE_REDUCTION = 10;  // cap on flat damage reduction
     static final int STARTING_GOLD = 50;
     static final int SHOP_SLOTS = 5;
-    static final int BASIC_ITEMS = 5;            // first 5 entries in ITEMS: potions, bomb, antidote, water
+    static final int BASIC_ITEMS = 6;            // first 6 entries in ITEMS: potions, bomb, antidote, water, warm drink
     static final int BOSS_INTERVAL = 5;          // the boss appears after this many defeated enemies
 
     // Damage over time
@@ -27,6 +26,12 @@ public class randomizedrpg {
     static final int BURN_DAMAGE = 3;
     static final int BURN_WEAK_BONUS = 5;        // extra burn damage on targets weak to fire
     static final int NATURAL_CURE_CHANCE = 20;   // % chance per turn that a status wears off
+    static final int FROSTBITE_DAMAGE = 2;
+    static final double FROSTBITE_DEX_CUT = 0.10; // frostbite lowers Dexterity by 10%
+
+    static final double DODGE_EVASION_MULT = 3.0; // Dodge triples your evasion until your next turn
+    static final int STAT_GAIN_MIN = 1;           // clearing a locale: +1..+6 on every stat
+    static final int STAT_GAIN_MAX = 6;
 
     // ==================================================================
     // Elements, statuses, positions
@@ -35,10 +40,10 @@ public class randomizedrpg {
     /** SLASH / PIERCE / BLUNT are physical damage types (Strength); FIRE / ICE / LIGHTNING are magical (Intelligence). */
     enum Element { SLASH, PIERCE, BLUNT, FIRE, ICE, LIGHTNING }
 
-    enum Status { BLEED, POISON, BURN }
+    enum Status { BLEED, POISON, BURN, FROSTBITE }
 
     /** Special tags used by the boss to tie moves to its body parts. */
-    enum MoveTag { NONE, BEAK, CLAWS, TAIL }
+    enum MoveTag { NONE, BEAK, BITE, CLAWS, TAIL, POUNCE }
 
     /** FRONT = high risk / high reward, BACK = safer but weaker. */
     enum Position {
@@ -78,9 +83,12 @@ public class randomizedrpg {
         final int hitsMax;
         final Status status;      // status inflicted on hit (or null)
         final double statusChance;
+        final Status status2;     // optional second status (or null)
+        final double statusChance2;
 
         Move(String name, int power, double hitChance, Element element, boolean magic, int uses, boolean charge,
-             MoveTag tag, int hitsMin, int hitsMax, Status status, double statusChance) {
+             MoveTag tag, int hitsMin, int hitsMax, Status status, double statusChance,
+             Status status2, double statusChance2) {
             this.name = name;
             this.power = power;
             this.hitChance = hitChance;
@@ -93,6 +101,14 @@ public class randomizedrpg {
             this.hitsMax = hitsMax;
             this.status = status;
             this.statusChance = statusChance;
+            this.status2 = status2;
+            this.statusChance2 = statusChance2;
+        }
+
+        /** Move with one status. */
+        Move(String name, int power, double hitChance, Element element, boolean magic, int uses, boolean charge,
+             MoveTag tag, int hitsMin, int hitsMax, Status status, double statusChance) {
+            this(name, power, hitChance, element, magic, uses, charge, tag, hitsMin, hitsMax, status, statusChance, null, 0.0);
         }
 
         /** Skills and Charge. */
@@ -142,15 +158,18 @@ public class randomizedrpg {
         final int damageReduction;
         final Element resist;     // null = none
         final boolean fireproof;  // immune to burning
+        final boolean iceproof;   // immune to frostbite
         final int price;
         final int[] bonus;        // stat bonuses, indexed like STAT_NAMES
 
-        Armor(String name, int defense, int damageReduction, Element resist, boolean fireproof, int price, int[] bonus) {
+        Armor(String name, int defense, int damageReduction, Element resist, boolean fireproof, boolean iceproof,
+              int price, int[] bonus) {
             this.name = name;
             this.defense = defense;
             this.damageReduction = damageReduction;
             this.resist = resist;
             this.fireproof = fireproof;
+            this.iceproof = iceproof;
             this.price = price;
             this.bonus = bonus;
         }
@@ -159,6 +178,7 @@ public class randomizedrpg {
             String text = "DEF " + defense + ", DR " + damageReduction;
             if (resist != null) text += ", resists " + resist;
             if (fireproof) text += ", fireproof";
+            if (iceproof) text += ", iceproof";
             for (int i = 0; i < bonus.length; i++) {
                 if (bonus[i] != 0) text += String.format(", %+d %s", bonus[i], STAT_NAMES[i].substring(0, 3).toUpperCase());
             }
@@ -166,7 +186,7 @@ public class randomizedrpg {
         }
     }
 
-    enum ItemType { HEAL, DAMAGE, ANTIDOTE, WATER, SPELLBOOK, SCROLL }
+    enum ItemType { HEAL, DAMAGE, ANTIDOTE, WATER, WARM, SPELLBOOK, SCROLL }
 
     static class Item {
         final String name;
@@ -202,6 +222,7 @@ public class randomizedrpg {
             case DAMAGE: return "DAMAGE " + (it.value + bonus);
             case ANTIDOTE: return "cures poison";
             case WATER: return "cures burning";
+            case WARM: return "cures frostbite";
             default: return "teaches " + SKILLS[it.skillIndex].name;
         }
     }
@@ -229,6 +250,7 @@ public class randomizedrpg {
         new Item("Bomb", ItemType.DAMAGE, 25, 30),
         new Item("Antidote", ItemType.ANTIDOTE, 0, 25),
         new Item("Water Flask", ItemType.WATER, 0, 25),
+        new Item("Warm Drink", ItemType.WARM, 0, 25),
         new Item("Spellbook: Fireball", ItemType.SPELLBOOK, 0, 120, 0),
         new Item("Spellbook: Frost Shard", ItemType.SPELLBOOK, 0, 100, 1),
         new Item("Spellbook: Lightning Bolt", ItemType.SPELLBOOK, 0, 140, 2),
@@ -240,34 +262,35 @@ public class randomizedrpg {
     static final Weapon[] WEAPONS = {
         new Weapon("Iron Sword", Element.SLASH, 1, 80,
                 new Move("Slash", 10, 0.95, Element.SLASH),
-                new Move("Thrust", 14, 0.85, Element.PIERCE),
-                new Move("Cleave", 20, 0.80, Element.SLASH)),
+                new Move("Thrust", 14, 0.80, Element.PIERCE),
+                new Move("Cleave", 20, 0.60, Element.SLASH)),
         new Weapon("Hunter's Bow", Element.PIERCE, 2, 110,
                 new Move("Quick Shot", 8, 1.00, Element.PIERCE),
                 new Move("Aimed Shot", 16, 0.75, Element.PIERCE),
-                new Move("Volley", 22, 0.70, Element.PIERCE)),
+                new Move("Volley", 22, 0.55, Element.PIERCE)),
         new Weapon("Rusty Dagger", Element.PIERCE, 4, 70,
                 new Move("Stab", 7, 1.00, Element.PIERCE),
                 new Move("Backstab", 13, 0.85, Element.SLASH)),
         new Weapon("War Axe", Element.SLASH, 3, 130,
                 new Move("Chop", 14, 0.85, Element.SLASH),
-                new Move("Smash", 24, 0.70, Element.BLUNT)),
+                new Move("Smash", 24, 0.55, Element.BLUNT)),
         new Weapon("Spiked Mace", Element.BLUNT, 2, 100,
-                new Move("Bash", 12, 0.95, Element.BLUNT),
-                new Move("Crush", 18, 0.80, Element.BLUNT),
-                new Move("Skull Crack", 26, 0.70, Element.BLUNT)),
+                new Move("Bash", 12, 0.90, Element.BLUNT),
+                new Move("Crush", 18, 0.75, Element.BLUNT),
+                new Move("Skull Crack", 26, 0.50, Element.BLUNT)),
         new Weapon("Iron Spear", Element.PIERCE, 3, 100,
                 new Move("Lunge", 11, 0.95, Element.PIERCE),
                 new Move("Haft Strike", 9, 0.95, Element.BLUNT),
-                new Move("Impale", 21, 0.75, Element.PIERCE))
+                new Move("Impale", 21, 0.65, Element.PIERCE))
     };
 
     static final Armor[] ARMORS = {
-        new Armor("Leather Set", 2, 1, null, false, 60, statBlock(0, 1, 0, 0, 0, 0)),
-        new Armor("Chainmail Set", 5, 3, Element.SLASH, false, 140, statBlock(0, 0, 1, 0, 0, 0)),
-        new Armor("Ashen Mail", 6, 4, Element.FIRE, true, 200, statBlock(0, 0, 1, 0, 0, 0)),
-        new Armor("Knight's Plate", 8, 6, Element.BLUNT, false, 260, statBlock(1, -1, 2, 0, 0, 0)),
-        new Armor("Dragonscale Set", 12, 10, Element.FIRE, true, 520, statBlock(2, 0, 2, 1, 0, 0))
+        new Armor("Leather Set", 2, 1, null, false, false, 60, statBlock(0, 1, 0, 0, 0, 0)),
+        new Armor("Chainmail Set", 5, 3, Element.SLASH, false, false, 140, statBlock(0, 0, 1, 0, 0, 0)),
+        new Armor("Ashen Mail", 6, 4, Element.FIRE, true, false, 200, statBlock(0, 0, 1, 0, 0, 0)),
+        new Armor("Frostguard Mail", 7, 5, Element.ICE, false, true, 240, statBlock(0, 0, 2, 0, 0, 0)),
+        new Armor("Knight's Plate", 8, 6, Element.BLUNT, false, false, 260, statBlock(1, -1, 2, 0, 0, 0)),
+        new Armor("Dragonscale Set", 12, 10, Element.FIRE, true, false, 520, statBlock(2, 0, 2, 1, 0, 0))
     };
 
     // ---------------- Cockatrice (boss) moves ----------------
@@ -360,7 +383,7 @@ public class randomizedrpg {
             Element.PIERCE, Element.BLUNT,
             new Weapon("Ape Fists", Element.BLUNT, 0, 0,
                     new Move("Pound", 14, 0.85, Element.BLUNT),
-                    new Move("Slam", 22, 0.70, Element.BLUNT)),
+                    new Move("Slam", 22, 0.60, Element.BLUNT)),
             25, 40);
 
     // Raptors have 40% less HP than the Raptor Alpha that leads them.
@@ -379,6 +402,170 @@ public class randomizedrpg {
             20, 32, 1, 1, RAPTOR, 1, 2);
 
     static final EnemyType[] FOREST = { SNAKE, GOBLIN, SKELETON_ARCHER, GREAT_APE, RAPTOR_ALPHA };
+
+    // ---------------- Snowy Peaks enemies ----------------
+    static final int DIRE_WOLF_ALPHA_HP = 150;
+
+    static final EnemyType DIRE_WOLF = new EnemyType("Dire Wolf", 130, statBlock(9, 14, 7, 3, 8, 10), 0, 0, 0,
+            Element.FIRE, Element.ICE,
+            new Weapon("Wolf Fangs", Element.PIERCE, 0, 0,
+                    new Move("Bite", 12, 0.95, Element.PIERCE),
+                    new Move("Pounce", 18, 0.70, Element.SLASH)),
+            18, 28);
+
+    static final EnemyType WOLVERINE = new EnemyType("Wolverine", 115, statBlock(10, 13, 8, 3, 7, 9), 1, 0, 2,
+            Element.LIGHTNING, null,
+            new Weapon("Wolverine Claws", Element.SLASH, 0, 0,
+                    new Move("Claw Rake", 13, 0.90, Element.SLASH),
+                    new Move("Savage Bite", 19, 0.70, Element.PIERCE)),
+            18, 28);
+
+    static final EnemyType GIANT_ELK = new EnemyType("Giant Elk", 170, statBlock(11, 10, 9, 3, 6, 8), 4, 0, 0,
+            Element.SLASH, Element.ICE,
+            new Weapon("Great Antlers", Element.PIERCE, 0, 0,
+                    new Move("Gore", 17, 0.80, Element.PIERCE),
+                    new Move("Trample", 24, 0.65, Element.BLUNT)),
+            26, 38);
+
+    static final EnemyType BEAR = new EnemyType("Bear", 200, statBlock(13, 7, 11, 3, 6, 7), 6, 1, 1,
+            Element.PIERCE, Element.ICE,
+            new Weapon("Bear Claws", Element.SLASH, 0, 0,
+                    new Move("Maul", 18, 0.85, Element.SLASH),
+                    new Move("Bear Hug", 26, 0.60, Element.BLUNT)),
+            34, 48);
+
+    static final EnemyType MAMMOTH = new EnemyType("Mammoth", 250, statBlock(13, 3, 12, 2, 4, 6), 8, 3, 0,
+            Element.FIRE, Element.BLUNT,
+            new Weapon("Mammoth Tusks", Element.PIERCE, 0, 0,
+                    new Move("Tusk Thrust", 20, 0.75, Element.PIERCE),
+                    new Move("Stomp", 28, 0.55, Element.BLUNT)),
+            45, 65);
+
+    // Pack wolves have 40% less HP than the Dire Wolf Alpha that leads them.
+    static final EnemyType PACK_WOLF = new EnemyType("Dire Wolf", DIRE_WOLF_ALPHA_HP * 6 / 10, statBlock(9, 14, 7, 3, 8, 10), 0, 0, 0,
+            Element.FIRE, Element.ICE,
+            new Weapon("Wolf Claws", Element.SLASH, 0, 0,
+                    new Move("Claw Slash", 12, 0.95, Element.SLASH, Status.BLEED, 0.25),
+                    new Move("Rending Pounce", 18, 0.75, Element.SLASH, Status.BLEED, 0.40)),
+            12, 18);
+
+    static final EnemyType DIRE_WOLF_ALPHA = new EnemyType("Dire Wolf Alpha", DIRE_WOLF_ALPHA_HP, statBlock(10, 15, 7, 3, 8, 10), 1, 0, 1,
+            Element.FIRE, Element.ICE,
+            new Weapon("Alpha Claws", Element.SLASH, 0, 0,
+                    new Move("Claw Slash", 13, 0.95, Element.SLASH, Status.BLEED, 0.30),
+                    new Move("Rending Pounce", 19, 0.75, Element.SLASH, Status.BLEED, 0.45)),
+            32, 48, 1, 1, PACK_WOLF, 1, 2);
+
+    static final EnemyType[] SNOWY_PEAKS = { DIRE_WOLF, WOLVERINE, GIANT_ELK, BEAR, MAMMOTH, DIRE_WOLF_ALPHA };
+
+    // ---------------- Frostfang Phantom (boss) moves ----------------
+    static final Move PHANTOM_BITE = new Move("Bite", 17, 0.85, Element.PIERCE, false, 0, false,
+            MoveTag.BITE, 1, 1, Status.BLEED, 0.10, Status.FROSTBITE, 0.10);
+    static final Move PHANTOM_SWIPES = new Move("Raging Swipes", 5, 0.80, Element.SLASH, false, 0, false,
+            MoveTag.CLAWS, 2, 6, Status.BLEED, 0.05);
+    static final Move PHANTOM_POUNCE = new Move("Pounce", 22, 0.80, Element.BLUNT, false, 0, false,
+            MoveTag.POUNCE, 1, 1, Status.BLEED, 0.10, Status.FROSTBITE, 0.10);
+    static final Move FOG_CLOAK = new Move("Fog Cloak", 0, 1.0, null, false, 0, false);
+    static final Move LOCK_ON = new Move("Lock On", 0, 1.0, null, false, 0, false);
+
+    // ==================================================================
+    // LOCALE 3 TEMPLATE - enemies
+    // Copy/rename these, fill in the TODOs, then register them in LOCALES below.
+    // ==================================================================
+    // TODO: rename, set HP, stats {STR, DEX, CON, INT, WIS, LCK}, defense, damage reduction, armor pen,
+    //       weakness, resistance (use null for none), weapon moves, and gold range.
+    static final EnemyType TEMPLATE_ENEMY_A = new EnemyType("Template Enemy A", 120, statBlock(8, 10, 8, 4, 6, 8), 2, 0, 1,
+            Element.FIRE, Element.ICE,
+            new Weapon("Template Weapon A", Element.SLASH, 0, 0,
+                    new Move("Template Attack", 12, 0.90, Element.SLASH),
+                    new Move("Template Heavy Attack", 20, 0.60, Element.BLUNT)),
+            20, 30);
+
+    // A group enemy: 1-2 of them appear together (the last two numbers before null are the group size).
+    static final EnemyType TEMPLATE_ENEMY_B = new EnemyType("Template Enemy B", 70, statBlock(6, 14, 5, 3, 6, 8), 0, 0, 1,
+            Element.BLUNT, null,
+            new Weapon("Template Weapon B", Element.PIERCE, 0, 0,
+                    new Move("Template Bite", 8, 0.95, Element.PIERCE, Status.POISON, 0.25)),   // example: 25% poison
+            12, 20, 1, 2, null, 0, 0);
+
+    // A leader that spawns with 1-2 escorts (the escort type is the 3rd value from the end).
+    static final EnemyType TEMPLATE_ESCORT = new EnemyType("Template Escort", 72, statBlock(6, 12, 5, 3, 6, 8), 1, 0, 0,
+            Element.LIGHTNING, null,
+            new Weapon("Template Escort Weapon", Element.SLASH, 0, 0,
+                    new Move("Template Slash", 9, 0.95, Element.SLASH, Status.BLEED, 0.25)),
+            8, 14);
+
+    static final EnemyType TEMPLATE_LEADER = new EnemyType("Template Leader", 120, statBlock(8, 13, 6, 3, 6, 8), 1, 0, 1,
+            Element.ICE, null,
+            new Weapon("Template Leader Weapon", Element.SLASH, 0, 0,
+                    new Move("Template Strike", 11, 0.95, Element.SLASH, Status.BLEED, 0.30)),
+            26, 38, 1, 1, TEMPLATE_ESCORT, 1, 2);
+
+    static final EnemyType[] TEMPLATE_LOCALE_ENEMIES = { TEMPLATE_ENEMY_A, TEMPLATE_ENEMY_B, TEMPLATE_LEADER };
+
+    // ==================================================================
+    // Locales
+    // HOW TO ADD A LOCALE (e.g. the 4th one):
+    //   1. Define its enemy types and an EnemyType[] array (see the TEMPLATE_* block above).
+    //   2. Write a boss class that extends Boss (copy TemplateBoss near the bottom of the boss section).
+    //   3. Add a `new Locale(...)` entry to LOCALES below, and a `case` for it in createBoss().
+    //   4. Optionally mention it in showMechanics().
+    // Clearing a locale (defeating its boss) marks it cleared, moves the player to the next locale,
+    // and gives +1..+6 to every stat.
+    // ==================================================================
+    static class Locale {
+        final String name;
+        final String intro;        // shown when the player arrives (null for the starting locale)
+        final String[] quiet;      // flavor text for "nothing happens"
+        final EnemyType[] enemies;
+        final Item welcomeItem;    // optional gift on arrival (null for none)
+        final int welcomeQty;
+
+        Locale(String name, String intro, String[] quiet, EnemyType[] enemies, Item welcomeItem, int welcomeQty) {
+            this.name = name;
+            this.intro = intro;
+            this.quiet = quiet;
+            this.enemies = enemies;
+            this.welcomeItem = welcomeItem;
+            this.welcomeQty = welcomeQty;
+        }
+    }
+
+    static final Locale[] LOCALES = {
+        new Locale("Forest", null,
+                new String[] {
+                    "You wander through the trees, but nothing happens.",
+                    "The path is quiet. Only the wind keeps you company.",
+                    "You find nothing but old footprints."
+                },
+                FOREST, null, 0),
+        new Locale("Snowy Peaks",
+                "The trees thin out and the air turns bitter. Before you rise the SNOWY PEAKS.",
+                new String[] {
+                    "Snow crunches under your boots, but nothing happens.",
+                    "A cold wind howls across the ridge. You see nothing.",
+                    "You find only half-buried tracks in the snow."
+                },
+                SNOWY_PEAKS, ITEMS[5], 2), // Warm Drinks cure frostbite
+        // TEMPLATE LOCALE - TODO: rename, rewrite the intro/quiet text, and swap in your own enemies.
+        new Locale("Locale 3 (TEMPLATE)",
+                "[TEMPLATE] You arrive in the third locale. Replace this intro text with your own.",
+                new String[] {
+                    "[TEMPLATE] Nothing happens. Replace this flavor text.",
+                    "[TEMPLATE] The area is quiet. Replace this flavor text.",
+                    "[TEMPLATE] You find nothing. Replace this flavor text."
+                },
+                TEMPLATE_LOCALE_ENEMIES, null, 0)
+    };
+
+    /** Creates the boss of the given locale. Add a case here for every new locale. */
+    static Boss createBoss(int localeIndex) {
+        switch (localeIndex) {
+            case 0: return new Cockatrice();
+            case 1: return new FrostfangPhantom();
+            default: return new TemplateBoss();   // TODO: replace with your locale 3 boss
+        }
+    }
 
     /** Builds the group of enemies for one encounter (snakes come in pairs, the alpha leads raptors). */
     static Fighter[] spawnEncounter(EnemyType t) {
@@ -474,6 +661,7 @@ public class randomizedrpg {
         Armor armor;
         Position position = Position.FRONT;
         boolean guarding = false;
+        boolean dodging = false;       // Dodge: evasion x3 until the next turn
         boolean charged = false;
         boolean stunned = false;       // loses its next turn
         boolean infused = false;       // current attack coated in flaming gel (boss)
@@ -483,11 +671,13 @@ public class randomizedrpg {
         int bleedDamage = BLEED_START;
         boolean poisoned = false;
         boolean burning = false;
+        boolean frostbitten = false;
 
         // Innate values (used by enemies; players get theirs from gear)
         int defenseBase = 0;
         int damageReductionBase = 0;
         int armorPenBase = 0;
+        double evasionBase = 0.0;
         Element weakness = null;
         Element resistance = null;
         boolean weaknessKnown = false;     // has the player discovered this affinity?
@@ -502,9 +692,11 @@ public class randomizedrpg {
             this.weapon = weapon;
         }
 
-        /** TOTAL stat = base score + gear bonuses. */
+        /** TOTAL stat = base score + gear bonuses (frostbite lowers Dexterity by 10%). */
         int totalStat(int stat) {
-            return scores[stat] + (armor == null ? 0 : armor.bonus[stat]);
+            int total = scores[stat] + (armor == null ? 0 : armor.bonus[stat]);
+            if (stat == DEX && frostbitten) total = (int) Math.round(total * (1.0 - FROSTBITE_DEX_CUT));
+            return total;
         }
 
         int mod(int stat) {
@@ -545,9 +737,23 @@ public class randomizedrpg {
             return armor == null ? null : armor.resist;
         }
 
-        // Hooks the boss overrides
-        double evasion() {
+        // ---- Evasion: base x3 while dodging, plus any temporary bonus ----
+        double baseEvasion() {
+            return evasionBase;
+        }
+
+        double extraEvasion() {
             return 0.0;
+        }
+
+        double evasion() {
+            double e = baseEvasion() * (dodging ? DODGE_EVASION_MULT : 1.0) + extraEvasion();
+            return Math.max(0.0, Math.min(0.90, e));
+        }
+
+        // ---- Hooks the bosses override ----
+        double damageTakenMult() {
+            return 1.0;
         }
 
         double fireMult() {
@@ -562,8 +768,11 @@ public class randomizedrpg {
             return move.hitChance;
         }
 
-        double statusChanceOf(Move move) {
-            return move.statusChance;
+        /** Chance that this move inflicts the given status. */
+        double statusChanceOf(Move move, Status status) {
+            if (move.status == status) return move.statusChance;
+            if (move.status2 == status) return move.statusChance2;
+            return 0.0;
         }
 
         void clearStatuses() {
@@ -571,10 +780,12 @@ public class randomizedrpg {
             bleedDamage = BLEED_START;
             poisoned = false;
             burning = false;
+            frostbitten = false;
             stunned = false;
             infused = false;
             charged = false;
             guarding = false;
+            dodging = false;
         }
 
         boolean isAlive() {
@@ -595,15 +806,28 @@ public class randomizedrpg {
         int gold = STARTING_GOLD;
         int killsSinceBoss = 0;
         int bossesDefeated = 0;
+        int locale = 0;                                  // index into LOCALES
+        final boolean[] cleared = new boolean[LOCALES.length];
         final boolean[] knownSkills = new boolean[SKILLS.length];
         final int[] skillUses = new int[SKILLS.length];
 
         Player(String name, int[] scores, Inventory inventory) {
             super(name, 100, scores, null);
             this.inventory = inventory;
-            // Constitution -> HP bonus (none if the modifier is 0 or negative)
-            maxHp = 100 + Math.max(0, Math.floorDiv(scores[CON] - 10, 2)) * 5;
+            recalcMaxHp();
             hp = maxHp;
+        }
+
+        /** Constitution -> HP bonus (none if the modifier is 0 or negative). Uses base Constitution. */
+        void recalcMaxHp() {
+            maxHp = 100 + Math.max(0, Math.floorDiv(scores[CON] - 10, 2)) * 5;
+            if (hp > maxHp) hp = maxHp;
+        }
+
+        /** Players dodge based on Dexterity: 1% evasion per point of TOTAL Dexterity. */
+        @Override
+        double baseEvasion() {
+            return 0.01 * totalStat(DEX);
         }
 
         /** Intelligence makes items stronger. */
@@ -624,7 +848,7 @@ public class randomizedrpg {
     }
 
     // ==================================================================
-    // The Cockatrice (boss)
+    // Bosses (one per locale). Damage to a body part also drains the boss's main HP.
     // ==================================================================
     static class BodyPart {
         final String name;
@@ -661,36 +885,92 @@ public class randomizedrpg {
         }
     }
 
-    static class Boss extends Fighter {
-        static final int HEAD = 0, THROAT = 1, RIGHT_LEG = 2, LEFT_LEG = 3, TAIL = 4;
-
-        // Damage to a part also reduces the Cockatrice's main HP.
-        final BodyPart[] parts = {
-            new BodyPart("Head", 150, Element.BLUNT),
-            new BodyPart("Throat", 100, Element.BLUNT, Element.SLASH, Element.ICE),
-            new BodyPart("Right Leg", 50, Element.BLUNT),
-            new BodyPart("Left Leg", 50, Element.BLUNT),
-            new BodyPart("Tail", 100, Element.SLASH)
-        };
+    abstract static class Boss extends Fighter {
+        final BodyPart[] parts;
         boolean enraged = false;
+        int turn = 0; // how many turns this boss has taken
+
+        Boss(String name, int maxHp, int[] stats, Weapon weapon, BodyPart[] parts) {
+            super(name, maxHp, stats, weapon);
+            this.parts = parts;
+            weaknessKnown = true;   // its weak points are its body parts
+            resistanceKnown = true;
+        }
+
+        abstract String introText();
+
+        abstract String defeatText();
+
+        /** The boss's actions for one turn (damage over time and stun are already handled). */
+        abstract void takeTurn(Fighter target);
+
+        /** Called for every hit that lands on one of its body parts. */
+        void onPartHit(BodyPart part, Move move, int damage) {
+            boolean wasBroken = part.broken();
+            part.hp = Math.max(0, part.hp - damage);
+            System.out.printf("  The %s takes %d damage. (%d/%d HP)%n", part.name, damage, part.hp, part.maxHp);
+            if (!wasBroken && part.broken()) {
+                System.out.println("  The " + name + "'s " + part.name.toUpperCase() + " IS DESTROYED!");
+                onPartDestroyed(part);
+            } else if (!part.broken()) {
+                onPartStruck(part, move);
+            }
+        }
+
+        /** Hook: effects of a part being destroyed (messages; the effects themselves live in the overrides). */
+        void onPartDestroyed(BodyPart part) {
+        }
+
+        /** Hook: effects of hitting a part that is still standing (stuns, etc.). */
+        void onPartStruck(BodyPart part, Move move) {
+        }
+
+        /** Returns true on the turn the boss drops to 50% HP. */
+        boolean checkEnrage() {
+            if (!enraged && hp * 2 <= maxHp) {
+                enraged = true;
+                return true;
+            }
+            return false;
+        }
+    }
+
+    // ---------------- Forest boss ----------------
+    static class Cockatrice extends Boss {
+        static final int HEAD = 0, THROAT = 1, RIGHT_LEG = 2, LEFT_LEG = 3, TAIL = 4;
         double iceWeaken = 0.0; // fire damage lost to ice hits on the throat
 
-        Boss() {
-            super("Cockatrice", 450, statBlock(5, 8, 6, 2, 6, 10),
-                    new Weapon("Cockatrice Body", Element.PIERCE, 0, 0, PIERCE_STRIKE));
+        Cockatrice() {
+            super("Cockatrice", 400, statBlock(5, 8, 6, 2, 6, 10),
+                    new Weapon("Cockatrice Body", Element.PIERCE, 0, 0, PIERCE_STRIKE),
+                    new BodyPart[] {
+                        new BodyPart("Head", 150, Element.BLUNT),
+                        new BodyPart("Throat", 100, Element.BLUNT, Element.SLASH, Element.ICE),
+                        new BodyPart("Right Leg", 50, Element.BLUNT),
+                        new BodyPart("Left Leg", 50, Element.BLUNT),
+                        new BodyPart("Tail", 100, Element.SLASH)
+                    });
             defenseBase = 3;
             damageReductionBase = 1;
             armorPenBase = 2;
-            weaknessKnown = true;   // its weak points are its body parts
-            resistanceKnown = true;
+            evasionBase = 0.15;
             goldReward = 250;
+        }
+
+        @Override
+        String introText() {
+            return "A deafening screech shakes the trees...\nThe COCKATRICE bursts out of the undergrowth!";
+        }
+
+        @Override
+        String defeatText() {
+            return "The Cockatrice has been slain! The forest falls silent.";
         }
 
         /** Evasion drops 20% when enraged (it attacks more recklessly). */
         @Override
-        double evasion() {
-            double base = 0.15;
-            return enraged ? base * 0.8 : base;
+        double baseEvasion() {
+            return enraged ? evasionBase * 0.8 : evasionBase;
         }
 
         /**
@@ -725,9 +1005,35 @@ public class randomizedrpg {
         }
 
         @Override
-        double statusChanceOf(Move move) {
-            if (move.tag == MoveTag.TAIL && parts[TAIL].broken()) return 0.0; // no more poison
-            return move.statusChance;
+        double statusChanceOf(Move move, Status status) {
+            if (move.tag == MoveTag.TAIL && parts[TAIL].broken() && status == Status.POISON) return 0.0; // no more poison
+            return super.statusChanceOf(move, status);
+        }
+
+        @Override
+        void onPartDestroyed(BodyPart part) {
+            if (part == parts[HEAD]) System.out.println("  Its beak attacks will deal 40% less damage.");
+            if (part == parts[THROAT]) System.out.println("  It can no longer use fire attacks!");
+            if (part == parts[TAIL]) System.out.println("  Its tail swipes deal 60% less damage and can no longer poison.");
+            if (part == parts[RIGHT_LEG]) System.out.println("  Its right claw strikes (odd swipes) deal 70% less damage.");
+            if (part == parts[LEFT_LEG]) System.out.println("  Its left claw strikes (even swipes) deal 70% less damage.");
+            if (parts[RIGHT_LEG].broken() && parts[LEFT_LEG].broken()) {
+                System.out.println("  With both legs destroyed, it can no longer pounce!");
+            }
+        }
+
+        @Override
+        void onPartStruck(BodyPart part, Move move) {
+            // Head: blunt hits have a 20% chance to stun
+            if (part == parts[HEAD] && move.element == Element.BLUNT && !stunned && RNG.nextInt(100) < 20) {
+                stunned = true;
+                System.out.println("  The blow rattles the Cockatrice's skull - it is STUNNED!");
+            }
+            // Throat: ice hits further weaken its fire (down to 50%)
+            if (part == parts[THROAT] && move.element == Element.ICE) {
+                iceWeaken += 0.10;
+                System.out.printf("  The cold weakens its fire. (fire output now %d%%)%n", (int) Math.round(fireMult() * 100));
+            }
         }
 
         Move pickMove() {
@@ -743,6 +1049,250 @@ public class randomizedrpg {
             if (!(parts[RIGHT_LEG].broken() && parts[LEFT_LEG].broken())) pool[n++] = POUNCE;
             if (!charged) pool[n++] = CHARGE;
             return pool[RNG.nextInt(n)];
+        }
+
+        @Override
+        void takeTurn(Fighter target) {
+            turn++;
+            if (checkEnrage()) {
+                System.out.println("The Cockatrice becomes ENRAGED! It attacks recklessly (less evasion),");
+                System.out.println("and its attacks may be infused with flaming gel!");
+            }
+            Move move = pickMove();
+            infused = enraged && !move.charge && RNG.nextInt(100) < 35;
+            if (infused) System.out.println("Flaming gel drips from the Cockatrice's attack!");
+            performAttack(this, target, move, null);
+            infused = false;
+        }
+    }
+
+    // ---------------- Snowy Peaks boss ----------------
+    static class FrostfangPhantom extends Boss {
+        static final int HEAD = 0, HIND_LEGS = 1, RIGHT_FORELEG = 2, LEFT_FORELEG = 3, TAIL = 4;
+        int fogTurns = 0;      // Fog Cloak: +20% evasion
+        int lockOnTurns = 0;   // Lock On: +10% accuracy, +20% crit rate
+
+        FrostfangPhantom() {
+            super("Frostfang Phantom", 400, statBlock(6, 18, 5, 3, 6, 10),   // high Dex
+                    new Weapon("Phantom Fangs", Element.PIERCE, 0, 0, PHANTOM_BITE),
+                    new BodyPart[] {
+                        new BodyPart("Head", 110, Element.BLUNT),
+                        new BodyPart("Hind Legs", 100, Element.BLUNT, Element.SLASH),
+                        new BodyPart("Right Foreleg", 60, Element.BLUNT),
+                        new BodyPart("Left Foreleg", 60, Element.BLUNT),
+                        new BodyPart("Tail", 70, Element.SLASH)
+                    });
+            defenseBase = 0;        // low defense
+            damageReductionBase = 0;
+            armorPenBase = 2;
+            evasionBase = 0.15;
+            goldReward = 350;
+        }
+
+        @Override
+        String introText() {
+            return "The temperature plummets and the snow swirls...\nThe FROSTFANG PHANTOM fades into view and howls!";
+        }
+
+        @Override
+        String defeatText() {
+            return "The Frostfang Phantom dissolves into drifting snow. The peaks fall quiet.";
+        }
+
+        /** A severed tail costs it 3 points of Dexterity. */
+        @Override
+        int totalStat(int stat) {
+            int v = super.totalStat(stat);
+            if (stat == DEX && parts[TAIL].broken()) v = Math.max(0, v - 3);
+            return v;
+        }
+
+        /** Fog Cloak +20%; enraged +10% (only +5% once the hind legs are destroyed). */
+        @Override
+        double extraEvasion() {
+            double e = fogTurns > 0 ? 0.20 : 0.0;
+            if (enraged) e += parts[HIND_LEGS].broken() ? 0.05 : 0.10;
+            return e;
+        }
+
+        /** Enraged: it takes 10% more damage. */
+        @Override
+        double damageTakenMult() {
+            return enraged ? 1.10 : 1.0;
+        }
+
+        /** Lock On: +20% crit rate. */
+        @Override
+        double critRate() {
+            return super.critRate() + (lockOnTurns > 0 ? 0.20 : 0.0);
+        }
+
+        /** Lock On: +10% accuracy. Pounce loses 20% accuracy at 50% hind leg HP and another 40% when they break. */
+        @Override
+        double accuracyOf(Move move, Fighter target) {
+            double acc = move.hitChance;
+            if (lockOnTurns > 0) acc += 0.10;
+            if (move.tag == MoveTag.POUNCE) {
+                BodyPart legs = parts[HIND_LEGS];
+                if (legs.hp * 2 <= legs.maxHp) acc -= 0.20;
+                if (legs.broken()) acc -= 0.40;
+            }
+            return Math.max(0.05, acc);
+        }
+
+        @Override
+        double outgoingMult(Move move, int hit) {
+            double m = super.outgoingMult(move, hit);
+            if (enraged) m *= 1.10;
+            if (move.tag == MoveTag.BITE && parts[HEAD].broken()) m *= 0.60;
+            if (move.tag == MoveTag.CLAWS) {
+                boolean rightClaw = hit % 2 == 1; // odd strikes use the right foreleg, even strikes the left
+                if (rightClaw && parts[RIGHT_FORELEG].broken()) m *= 0.30;
+                if (!rightClaw && parts[LEFT_FORELEG].broken()) m *= 0.30;
+            }
+            return m;
+        }
+
+        /** Enraged: +20% chance to bleed on every attack. */
+        @Override
+        double statusChanceOf(Move move, Status status) {
+            double c = super.statusChanceOf(move, status);
+            if (enraged && status == Status.BLEED && move.power > 0) c += 0.20;
+            return c;
+        }
+
+        @Override
+        void onPartDestroyed(BodyPart part) {
+            if (part == parts[HEAD]) System.out.println("  Its bite attacks will deal 40% less damage.");
+            if (part == parts[HIND_LEGS]) System.out.println("  It can no longer attack twice, and its pounce is far less accurate!");
+            if (part == parts[RIGHT_FORELEG]) System.out.println("  Its right claw strikes (odd swipes) deal 70% less damage.");
+            if (part == parts[LEFT_FORELEG]) System.out.println("  Its left claw strikes (even swipes) deal 70% less damage.");
+            if (part == parts[TAIL]) System.out.println("  It loses its balance - its Dexterity drops by 3!");
+        }
+
+        @Override
+        void onPartStruck(BodyPart part, Move move) {
+            // Head: blunt hits have a 20% chance to stun
+            if (part == parts[HEAD] && move.element == Element.BLUNT && !stunned && RNG.nextInt(100) < 20) {
+                stunned = true;
+                System.out.println("  The blow rattles the Phantom's skull - it is STUNNED!");
+            }
+        }
+
+        Move pickAttack() {
+            Move[] attacks = { PHANTOM_BITE, PHANTOM_SWIPES, PHANTOM_POUNCE };
+            return attacks[RNG.nextInt(attacks.length)];
+        }
+
+        Move pickMove() {
+            Move[] pool = new Move[6];
+            int n = 0;
+            pool[n++] = PHANTOM_BITE;
+            pool[n++] = PHANTOM_SWIPES;
+            pool[n++] = PHANTOM_POUNCE;
+            if (fogTurns == 0) pool[n++] = FOG_CLOAK;
+            if (lockOnTurns == 0) pool[n++] = LOCK_ON;
+            if (!charged) pool[n++] = CHARGE;
+            return pool[RNG.nextInt(n)];
+        }
+
+        @Override
+        void takeTurn(Fighter target) {
+            turn++;
+            if (checkEnrage()) {
+                System.out.println("The Frostfang Phantom becomes ENRAGED! It fights recklessly (takes 10% more damage),");
+                System.out.println("but hits harder, bleeds its prey, and becomes harder to pin down!");
+            }
+
+            boolean castFog = false;
+            boolean castLockOn = false;
+
+            // Passive: on even turns, 80% chance to attack twice while the hind legs are intact.
+            if (turn % 2 == 0 && !parts[HIND_LEGS].broken() && RNG.nextInt(100) < 80) {
+                System.out.println("The Frostfang Phantom blurs forward - it attacks twice!");
+                for (int i = 0; i < 2 && target.isAlive(); i++) {
+                    performAttack(this, target, pickAttack(), null);
+                }
+            } else {
+                Move move = pickMove();
+                if (move == FOG_CLOAK) {
+                    fogTurns = 3;
+                    castFog = true;
+                    System.out.println("The Frostfang Phantom wraps itself in swirling fog! (evasion +20% for 3 turns)");
+                } else if (move == LOCK_ON) {
+                    lockOnTurns = 3;
+                    castLockOn = true;
+                    System.out.println("The Frostfang Phantom locks its glowing eyes on you! (accuracy +10%, crit rate +20% for 3 turns)");
+                } else {
+                    performAttack(this, target, move, null);
+                }
+            }
+
+            // Buffs last 3 turns; the turn they are cast does not use one up.
+            if (!castFog && fogTurns > 0) fogTurns--;
+            if (!castLockOn && lockOnTurns > 0) lockOnTurns--;
+        }
+    }
+
+    // ==================================================================
+    // LOCALE 3 TEMPLATE - boss
+    // Copy this class for a new boss: rename it, then fill in every TODO.
+    // Useful hooks you can override (see Cockatrice / FrostfangPhantom for examples):
+    //   outgoingMult / accuracyOf / statusChanceOf  - change its damage, accuracy or status chances
+    //   baseEvasion / extraEvasion / damageTakenMult - change its evasion or the damage it takes
+    //   onPartDestroyed / onPartStruck               - react to body parts breaking or being hit
+    // ==================================================================
+    static class TemplateBoss extends Boss {
+        static final int PART_ONE = 0, PART_TWO = 1;   // TODO: one index per body part
+
+        // TODO: define your boss's moves. Extra status? use the 14-argument Move constructor (see PHANTOM_BITE).
+        static final Move TEMPLATE_STRIKE = new Move("Template Strike", 15, 0.90, Element.SLASH, Status.BLEED, 0.10);
+        static final Move TEMPLATE_SLAM = new Move("Template Slam", 22, 0.75, Element.BLUNT);
+
+        TemplateBoss() {
+            super("Template Boss",                          // TODO: name
+                    400,                                    // TODO: main HP
+                    statBlock(6, 8, 6, 3, 6, 8),            // TODO: STR, DEX, CON, INT, WIS, LCK
+                    new Weapon("Template Boss Body", Element.SLASH, 0, 0, TEMPLATE_STRIKE, TEMPLATE_SLAM),
+                    new BodyPart[] {                        // TODO: name, HP and weaknesses for each part
+                        new BodyPart("Part One", 150, Element.BLUNT),
+                        new BodyPart("Part Two", 150, Element.SLASH)
+                    });
+            defenseBase = 2;                                // TODO
+            damageReductionBase = 0;                        // TODO
+            armorPenBase = 1;                               // TODO
+            evasionBase = 0.10;                             // TODO
+            goldReward = 400;                               // TODO
+        }
+
+        @Override
+        String introText() {
+            return "[TEMPLATE] A boss appears! Replace this intro text.";   // TODO
+        }
+
+        @Override
+        String defeatText() {
+            return "[TEMPLATE] The boss is defeated! Replace this text.";   // TODO
+        }
+
+        @Override
+        void onPartDestroyed(BodyPart part) {
+            // TODO: explain what happens when a part breaks, and apply it in the hooks above.
+            if (part == parts[PART_ONE]) System.out.println("  [TEMPLATE] Part One effect goes here.");
+            if (part == parts[PART_TWO]) System.out.println("  [TEMPLATE] Part Two effect goes here.");
+        }
+
+        @Override
+        void takeTurn(Fighter target) {
+            turn++;
+            if (checkEnrage()) {
+                System.out.println("[TEMPLATE] The boss becomes ENRAGED! Replace this text.");   // TODO: enrage effects
+            }
+            // TODO: replace this simple move choice with your boss's real move logic.
+            Move[] pool = { TEMPLATE_STRIKE, TEMPLATE_SLAM, CHARGE };
+            Move move = pool[RNG.nextInt(pool.length)];
+            if (move.charge && charged) move = TEMPLATE_STRIKE;
+            performAttack(this, target, move, null);
         }
     }
 
@@ -823,6 +1373,12 @@ public class randomizedrpg {
             if (p.knownSkills[i]) skills += (skills.isEmpty() ? "" : ", ") + SKILLS[i].name;
         }
         System.out.println("Skills: " + (skills.isEmpty() ? "None" : skills));
+        System.out.printf("Evasion: %.0f%% (x%d while dodging)%n", p.baseEvasion() * 100, (int) DODGE_EVASION_MULT);
+        String clearedList = "";
+        for (int i = 0; i < LOCALES.length; i++) {
+            if (p.cleared[i]) clearedList += (clearedList.isEmpty() ? "" : ", ") + LOCALES[i].name;
+        }
+        System.out.println("Locale: " + LOCALES[p.locale].name + "   Cleared: " + (clearedList.isEmpty() ? "None" : clearedList));
         System.out.printf("Enemies defeated since the last boss: %d/%d   Bosses defeated: %d%n",
                 p.killsSinceBoss, BOSS_INTERVAL, p.bossesDefeated);
     }
@@ -831,7 +1387,8 @@ public class randomizedrpg {
         System.out.println(LINE);
         System.out.println("BASE STATS (modifier = floor((total - 10) / 2)):");
         System.out.println("Strength -> +2 damage per point of TOTAL Strength (physical attacks)");
-        System.out.println("Dexterity -> Higher TOTAL Dex acts first; modifier gives +2% hit/retreat chance per point");
+        System.out.println("Dexterity -> Higher TOTAL Dex acts first; modifier gives +2% hit/retreat chance per point;");
+        System.out.println("                1% evasion per point of TOTAL Dex (see Dodge)");
         System.out.println("Constitution -> -1.5 damage taken per point of TOTAL Con (rounded);");
         System.out.println("                +5 max HP and +1 HP regen per turn per positive modifier point");
         System.out.println("                (no bonus if the modifier is 0 or negative; poison stops regen)");
@@ -856,23 +1413,28 @@ public class randomizedrpg {
         System.out.println("Poison -> -4 HP per turn and no HP regen. Cured by Antidotes.");
         System.out.println("Burn -> -3 HP per turn, defense -15% (-25% and +5 damage if weak to fire).");
         System.out.println("        Cured by Water Flasks. Fireproof armor is immune.");
+        System.out.println("Frostbite -> -2 HP per turn and Dexterity -10%. Cured by Warm Drinks.");
+        System.out.println("        Iceproof armor is immune.");
         System.out.println(LINE);
         System.out.println("COMBAT:");
         System.out.println("Attack -> Weapon moves, Charge, and learned skills (limited uses per battle)");
         System.out.println("Charge -> No damage; your next attack that lands deals double damage");
         System.out.println("Guard -> Halves the next hit you take");
-        System.out.println("Item -> Use a potion, bomb, antidote or water flask");
+        System.out.println("Dodge -> Triples your evasion until your next turn (lasts as long as Guard)");
+        System.out.println("Item -> Use a potion, bomb, antidote, water flask or warm drink");
         System.out.println("Position -> Front hits harder but takes more; Back is safer but weaker");
         System.out.println("Retreat -> Chance to flee the fight");
         System.out.println("Fights can have several enemies; everyone acts in order of Dexterity.");
         System.out.println("Enemies have hidden weaknesses/resistances. Hitting them reveals them,");
         System.out.println("and Intelligence helps you spot them each turn.");
         System.out.println(LINE);
-        System.out.println("THE " + AREA_NAME.toUpperCase() + ":");
-        System.out.println("Snakes, Goblins, Skeleton Archers, Great Apes and the Raptor Alpha (with raptors).");
-        System.out.println("After every " + BOSS_INTERVAL + " enemies you defeat, the Cockatrice appears on your next explore.");
-        System.out.println("Attack its body parts: damage to a part also drains its main HP.");
-        System.out.println("Breaking parts weakens its attacks (head, throat, legs, tail).");
+        System.out.println("LOCALES:");
+        System.out.println("Each locale has its own enemies. After every " + BOSS_INTERVAL + " enemies you defeat, its boss");
+        System.out.println("appears on your next explore. Attack its body parts: damage to a part also drains");
+        System.out.println("its main HP, and breaking parts weakens the boss.");
+        System.out.println("Defeating a boss clears the locale: +" + STAT_GAIN_MIN + " to +" + STAT_GAIN_MAX + " on EVERY stat (rolled per stat),");
+        System.out.println("and you move on to the next locale.");
+        System.out.println("Forest -> Snowy Peaks -> (locale 3 is a template for you to fill in)");
         System.out.println(LINE);
         System.out.println("EXPLORING:");
         System.out.println("[1] Nothing happens  [2] You find an item  [3] A fight begins  [4] A shop appears");
@@ -898,9 +1460,9 @@ public class randomizedrpg {
         boolean inGame = true;
         while (inGame && p.isAlive()) {
             System.out.println(LINE);
-            System.out.printf("ADVENTURE (%s) - %s   HP %d/%d   Gold %d%n", AREA_NAME, p.name, p.hp, p.maxHp, p.gold);
-            System.out.printf("Weapon: %s   Armor: %s   Boss in: %d kills%n", p.weapon.name,
-                    p.armor == null ? "None" : p.armor.name, Math.max(0, BOSS_INTERVAL - p.killsSinceBoss));
+            System.out.printf("ADVENTURE (%s) - %s   HP %d/%d   Gold %d%n", LOCALES[p.locale].name, p.name, p.hp, p.maxHp, p.gold);
+            System.out.printf("Weapon: %s   Armor: %s   %s%n", p.weapon.name, p.armor == null ? "None" : p.armor.name,
+                    p.cleared[p.locale] ? "Locale cleared" : "Boss in: " + Math.max(0, BOSS_INTERVAL - p.killsSinceBoss) + " kills");
             System.out.println("  [1] Explore  [2] Inventory  [3] Equipment  [4] Character  [0] Main Menu");
 
             switch (readInt(0, 4)) {
@@ -926,13 +1488,14 @@ public class randomizedrpg {
             System.out.println("You regenerate " + p.regen() + " HP as you travel.");
         }
 
-        // The boss ambushes you once enough enemies have fallen.
-        if (p.killsSinceBoss >= BOSS_INTERVAL) {
-            System.out.println("A deafening screech shakes the trees...");
-            System.out.println("The COCKATRICE bursts out of the undergrowth!");
-            resolveFight(p, new Fighter[] { new Boss() }, true);
+        // The boss ambushes you once enough enemies have fallen (until its locale is cleared).
+        if (p.killsSinceBoss >= BOSS_INTERVAL && !p.cleared[p.locale]) {
+            Boss boss = createBoss(p.locale);
+            System.out.println(boss.introText());
+            resolveFight(p, new Fighter[] { boss }, true);
             return;
         }
+        Locale here = LOCALES[p.locale];
 
         int fightChance = 30;
         int shopChance = 10;
@@ -947,12 +1510,7 @@ public class randomizedrpg {
 
         switch (event) {
             case 1:
-                String[] quiet = {
-                    "You wander through the trees, but nothing happens.",
-                    "The path is quiet. Only the wind keeps you company.",
-                    "You find nothing but old footprints."
-                };
-                System.out.println(quiet[RNG.nextInt(quiet.length)]);
+                System.out.println(here.quiet[RNG.nextInt(here.quiet.length)]);
                 break;
             case 2:
                 findLoot(p);
@@ -961,7 +1519,7 @@ public class randomizedrpg {
                 shop(p);
                 break;
             default:
-                resolveFight(p, spawnEncounter(FOREST[RNG.nextInt(FOREST.length)]), false);
+                resolveFight(p, spawnEncounter(here.enemies[RNG.nextInt(here.enemies.length)]), false);
                 break;
         }
     }
@@ -998,20 +1556,58 @@ public class randomizedrpg {
 
         if (boss) {
             if (result == Outcome.WIN) {
-                p.killsSinceBoss = 0;
-                p.bossesDefeated++;
-                System.out.println("The Cockatrice has been slain! The forest falls silent.");
+                clearLocale(p, (Boss) group[0]);
             } else {
-                System.out.println("The Cockatrice is still out there. It will find you again...");
+                System.out.println("The " + group[0].name + " is still out there. It will find you again...");
             }
-        } else {
+        } else if (!p.cleared[p.locale]) {
             p.killsSinceBoss += kills;
             if (kills > 0 && p.killsSinceBoss >= BOSS_INTERVAL) {
-                System.out.println("\nSomething enormous screeches in the distance. The Cockatrice is hunting you!");
+                System.out.println("\nSomething powerful stirs nearby. The boss of the " + LOCALES[p.locale].name + " is hunting you!");
                 System.out.println("It will appear the next time you explore.");
             } else if (kills > 0) {
                 System.out.printf("Enemies defeated since the last boss: %d/%d%n", p.killsSinceBoss, BOSS_INTERVAL);
             }
+        }
+    }
+
+    /** Defeating a locale's boss clears it: +1..+6 on every stat, then the player moves on to the next locale. */
+    static void clearLocale(Player p, Boss boss) {
+        Locale done = LOCALES[p.locale];
+        p.cleared[p.locale] = true;
+        p.killsSinceBoss = 0;
+        p.bossesDefeated++;
+
+        System.out.println();
+        System.out.println(boss.defeatText());
+        System.out.println("*** " + done.name.toUpperCase() + " CLEARED! ***");
+        System.out.println("The victory sharpens you. Every stat increases:");
+
+        int oldMax = p.maxHp;
+        for (int i = 0; i < STAT_NAMES.length; i++) {
+            int gain = STAT_GAIN_MIN + RNG.nextInt(STAT_GAIN_MAX - STAT_GAIN_MIN + 1);
+            p.scores[i] += gain;
+            System.out.printf("  %-13s +%d  (now %d)%n", STAT_NAMES[i], gain, p.scores[i]);
+        }
+        p.recalcMaxHp();
+        if (p.maxHp > oldMax) {
+            p.heal(p.maxHp - oldMax);
+            System.out.println("  Max HP +" + (p.maxHp - oldMax) + " (now " + p.maxHp + ")");
+        }
+
+        if (p.locale + 1 < LOCALES.length) {
+            p.locale++;
+            Locale next = LOCALES[p.locale];
+            System.out.println();
+            System.out.println("=== NEW LOCALE: " + next.name.toUpperCase() + " ===");
+            System.out.println(next.intro);
+            if (next.welcomeItem != null) {
+                if (p.inventory.addItem(next.welcomeItem, next.welcomeQty)) {
+                    System.out.println("A traveller hands you " + next.welcomeQty + " " + next.welcomeItem.name + "s for the road ahead.");
+                }
+            }
+        } else {
+            System.out.println("\nThere are no more locales to explore - you have cleared them all!");
         }
     }
 
@@ -1359,6 +1955,14 @@ public class randomizedrpg {
                 System.out.println("The flames on " + f.name + " die out.");
             }
         }
+        if (f.frostbitten && f.isAlive()) {
+            f.takeDamage(FROSTBITE_DAMAGE);
+            System.out.printf("%s suffers %d frostbite damage. (%d/%d HP)%n", f.name, FROSTBITE_DAMAGE, f.hp, f.maxHp);
+            if (f.isAlive() && RNG.nextInt(100) < NATURAL_CURE_CHANCE) {
+                f.frostbitten = false;
+                System.out.println("The frostbite on " + f.name + " thaws.");
+            }
+        }
         if (!f.isAlive()) {
             System.out.println(f.name + " collapses!");
             return;
@@ -1391,6 +1995,14 @@ public class randomizedrpg {
                     System.out.println("  " + target.name + " catches fire! Defense is reduced.");
                 }
                 break;
+            case FROSTBITE:
+                if (target.armor != null && target.armor.iceproof) {
+                    System.out.println("  " + target.name + "'s iceproof armor shrugs off the cold.");
+                } else {
+                    target.frostbitten = true;
+                    System.out.println("  " + target.name + " is frostbitten! Dexterity is reduced by 10%.");
+                }
+                break;
         }
     }
 
@@ -1399,6 +2011,7 @@ public class randomizedrpg {
         if (f.bleeding) text += " (Bleeding -" + f.bleedDamage + ")";
         if (f.poisoned) text += " (Poisoned)";
         if (f.burning) text += " (Burning)";
+        if (f.frostbitten) text += " (Frostbitten)";
         if (f.stunned) text += " (Stunned)";
         return text;
     }
@@ -1407,7 +2020,8 @@ public class randomizedrpg {
 
     /** Runs the player's turn. Returns true if the player escaped. */
     static boolean playerTurn(Player p, Fighter[] enemies) {
-        p.guarding = false; // guard lasts until the player's next turn
+        p.guarding = false; // guard and dodge last until the player's next turn
+        p.dodging = false;
         System.out.println();
         startTurn(p);
         if (!p.isAlive()) return false;
@@ -1418,14 +2032,15 @@ public class randomizedrpg {
         boolean turnUsed = false;
         while (!turnUsed) {
             System.out.println("\nYour turn:");
-            System.out.println("  [1] Attack  [2] Guard  [3] Item  [4] Position  [5] Retreat");
+            System.out.println("  [1] Attack  [2] Guard  [3] Dodge  [4] Item  [5] Position  [6] Retreat");
 
-            switch (readInt(1, 5)) {
+            switch (readInt(1, 6)) {
                 case 1: turnUsed = playerAttack(p, enemies); break;
                 case 2: turnUsed = playerGuard(p); break;
-                case 3: turnUsed = playerItem(p, enemies); break;
-                case 4: turnUsed = playerPosition(p); break;
-                case 5:
+                case 3: turnUsed = playerDodge(p); break;
+                case 4: turnUsed = playerItem(p, enemies); break;
+                case 5: turnUsed = playerPosition(p); break;
+                case 6:
                     if (tryRetreat(p)) return true;
                     turnUsed = true;
                     break;
@@ -1461,7 +2076,7 @@ public class randomizedrpg {
 
         if (part != null) {
             part.known = true;
-            System.out.println("Your insight reveals the Cockatrice's " + part.name + " is weak to " + part.weakText() + "!");
+            System.out.println("Your insight reveals the " + target.name + "'s " + part.name + " is weak to " + part.weakText() + "!");
         } else if (!target.weaknessKnown) {
             target.weaknessKnown = true;
             if (target.weakness == null) System.out.println("Your insight tells you " + target.name + " has no obvious weakness.");
@@ -1479,8 +2094,8 @@ public class randomizedrpg {
     }
 
     static void printFighterLine(Fighter f) {
-        System.out.printf("%-16s HP %3d/%-3d  [%s]%s%s%s%s%n", f.name, f.hp, f.maxHp, f.position,
-                f.guarding ? " (Guarding)" : "", f.charged ? " (Charged)" : "",
+        System.out.printf("%-18s HP %3d/%-3d  [%s]%s%s%s%s%s%n", f.name, f.hp, f.maxHp, f.position,
+                f.guarding ? " (Guarding)" : "", f.dodging ? " (Dodging)" : "", f.charged ? " (Charged)" : "",
                 (f instanceof Boss && ((Boss) f).enraged) ? " (ENRAGED)" : "", statusText(f));
     }
 
@@ -1495,7 +2110,7 @@ public class randomizedrpg {
                 Boss b = (Boss) e;
                 System.out.println("  Body parts (damage to a part also drains the main HP):");
                 for (BodyPart bp : b.parts) {
-                    System.out.printf("    %-9s %3d/%-3d  weak: %s%s%n", bp.name, bp.hp, bp.maxHp, bp.weakText(),
+                    System.out.printf("    %-13s %3d/%-3d  weak: %s%s%n", bp.name, bp.hp, bp.maxHp, bp.weakText(),
                             bp.broken() ? "  [DESTROYED]" : "");
                 }
             } else {
@@ -1628,6 +2243,15 @@ public class randomizedrpg {
         return true;
     }
 
+    /** Like Guard, but triples evasion instead of halving damage. */
+    static boolean playerDodge(Player p) {
+        double before = p.evasion();
+        p.dodging = true;
+        System.out.printf("%s watches for openings and prepares to dodge! Evasion x%d (%d%% -> %d%%) until your next turn.%n",
+                p.name, (int) DODGE_EVASION_MULT, Math.round(before * 100), Math.round(p.evasion() * 100));
+        return true;
+    }
+
     static boolean playerItem(Player p, Fighter[] enemies) {
         Inventory inv = p.inventory;
         if (inv.itemCount == 0) {
@@ -1684,7 +2308,18 @@ public class randomizedrpg {
             return true;
         }
 
-        // Bomb: flat damage to the chosen enemy (the Cockatrice's main HP if it is the target)
+        if (item.type == ItemType.WARM) {
+            if (!p.frostbitten) {
+                System.out.println("You aren't frostbitten.");
+                return false;
+            }
+            inv.removeOne(choice - 1);
+            p.frostbitten = false;
+            System.out.println(p.name + " sips the warm drink. The frostbite fades!");
+            return true;
+        }
+
+        // Bomb: flat damage to the chosen enemy (a boss's main HP if it is the target)
         Fighter target = chooseTarget(enemies);
         if (target == null) return false;
         inv.removeOne(choice - 1);
@@ -1771,6 +2406,7 @@ public class randomizedrpg {
         // 2. Multipliers
         damage *= attacker.position.damageDealtMult * defender.position.damageTakenMult;
         damage *= attacker.outgoingMult(move, hit); // boss body-part effects and fire output
+        damage *= defender.damageTakenMult();       // e.g. an enraged Frostfang Phantom takes 10% more
         if (attacker.infused) damage *= 1.10;
 
         if (attacker.charged) {
@@ -1804,7 +2440,7 @@ public class randomizedrpg {
 
         // 3. Flat reductions, applied after damage is calculated
         int defense = Math.max(0, defender.defense() - attacker.armorPen());   // 1 defense ignored per Armor Pen
-        int conDeduction = (int) Math.round(1.2 * defender.totalStat(CON));    // 1.5 per point of TOTAL Con
+        int conDeduction = (int) Math.round(1.5 * defender.totalStat(CON));    // 1.5 per point of TOTAL Con
         int reduction = defender.damageReduction();                            // capped at 10
         damage -= defense + conDeduction + reduction;
         int finalDamage = Math.max(1, (int) Math.round(damage));
@@ -1826,47 +2462,20 @@ public class randomizedrpg {
 
         // Damage to a boss body part also drains that part's own HP
         if (defender instanceof Boss && part != null) {
-            hitBossPart((Boss) defender, part, move, finalDamage);
+            ((Boss) defender).onPartHit(part, move, finalDamage);
         }
 
         if (defender.isAlive()) {
-            double chance = attacker.statusChanceOf(move);
-            if (move.status != null && RNG.nextDouble() < chance) {
-                applyStatus(defender, move.status);
+            Status[] all = Status.values();
+            for (int i = 0; i < all.length; i++) {
+                double chance = attacker.statusChanceOf(move, all[i]);
+                if (chance > 0 && RNG.nextDouble() < chance) {
+                    applyStatus(defender, all[i]);
+                }
             }
             if (attacker.infused && attacker.fireMult() > 0 && RNG.nextDouble() < 0.20) {
                 applyStatus(defender, Status.BURN);
             }
-        }
-    }
-
-    static void hitBossPart(Boss boss, BodyPart part, Move move, int damage) {
-        boolean wasBroken = part.broken();
-        part.hp = Math.max(0, part.hp - damage);
-        System.out.printf("  The %s takes %d damage. (%d/%d HP)%n", part.name, damage, part.hp, part.maxHp);
-
-        if (!wasBroken && part.broken()) {
-            System.out.println("  The Cockatrice's " + part.name.toUpperCase() + " IS DESTROYED!");
-            if (part == boss.parts[Boss.HEAD]) System.out.println("  Its beak attacks will deal 40% less damage.");
-            if (part == boss.parts[Boss.THROAT]) System.out.println("  It can no longer use fire attacks!");
-            if (part == boss.parts[Boss.TAIL]) System.out.println("  Its tail swipes deal 60% less damage and can no longer poison.");
-            if (part == boss.parts[Boss.RIGHT_LEG]) System.out.println("  Its right claw strikes (odd swipes) deal 70% less damage.");
-            if (part == boss.parts[Boss.LEFT_LEG]) System.out.println("  Its left claw strikes (even swipes) deal 70% less damage.");
-            if (boss.parts[Boss.RIGHT_LEG].broken() && boss.parts[Boss.LEFT_LEG].broken()) {
-                System.out.println("  With both legs destroyed, it can no longer pounce!");
-            }
-        }
-
-        // Head: blunt hits have a 20% chance to stun
-        if (part == boss.parts[Boss.HEAD] && move.element == Element.BLUNT && !part.broken()
-                && !boss.stunned && RNG.nextInt(100) < 20) {
-            boss.stunned = true;
-            System.out.println("  The blow rattles the Cockatrice's skull - it is STUNNED!");
-        }
-        // Throat: ice hits further weaken its fire (down to 50%)
-        if (part == boss.parts[Boss.THROAT] && move.element == Element.ICE && !part.broken()) {
-            boss.iceWeaken += 0.10;
-            System.out.printf("  The cold weakens its fire. (fire output now %d%%)%n", (int) Math.round(boss.fireMult() * 100));
         }
     }
 
@@ -1908,21 +2517,10 @@ public class randomizedrpg {
         if (!b.isAlive()) return;
         if (b.stunned) {
             b.stunned = false;
-            System.out.println("The Cockatrice is stunned and can't act!");
+            System.out.println(b.name + " is stunned and can't act!");
             return;
         }
-
-        if (!b.enraged && b.hp * 2 <= b.maxHp) {
-            b.enraged = true;
-            System.out.println("The Cockatrice becomes ENRAGED! It attacks recklessly (less evasion),");
-            System.out.println("and its attacks may be infused with flaming gel!");
-        }
-
-        Move move = b.pickMove();
-        b.infused = b.enraged && !move.charge && RNG.nextInt(100) < 35;
-        if (b.infused) System.out.println("Flaming gel drips from the Cockatrice's attack!");
-        performAttack(b, p, move, null);
-        b.infused = false;
+        b.takeTurn(p);
     }
 
     // ==================================================================
