@@ -17,7 +17,7 @@ public class randomizedrpg {
     static final int MAX_DAMAGE_REDUCTION = 10;  // cap on flat damage reduction
     static final int STARTING_GOLD = 50;
     static final int SHOP_SLOTS = 5;
-    static final int BASIC_ITEMS = 6;            // first 6 entries in ITEMS: potions, bomb, antidote, water, warm drink
+    static final int BASIC_ITEMS = 14;           // first 14 entries in ITEMS: potions, throwables, cures, gadgets (books follow)
     static final int BOSS_INTERVAL = 5;          // the boss appears after this many defeated enemies
 
     // Damage over time
@@ -28,6 +28,18 @@ public class randomizedrpg {
     static final int NATURAL_CURE_CHANCE = 20;   // % chance per turn that a status wears off
     static final int FROSTBITE_DAMAGE = 2;
     static final double FROSTBITE_DEX_CUT = 0.10; // frostbite lowers Dexterity by 10%
+    static final int STATIC_DAMAGE = 1;           // static: -1 HP per turn
+    static final int STATIC_PARALYZE_CHANCE = 30; // static: 30% chance to lose the turn
+
+    // Smoke Bomb / Flashbomb
+    static final int SMOKE_TURNS = 2;
+    static final int SMOKE_COOLDOWN = 5;
+    static final int FLASH_TURNS = 3;
+    static final int FLASH_COOLDOWN = 5;
+    static final double FLASH_ACCURACY_CUT = 0.30;
+
+    // Arena effect (Calamitatum Rex): the element that is boosted for everyone, or null for none.
+    static Element arenaEffect = null;
 
     static final double DODGE_EVASION_MULT = 3.0; // Dodge triples your evasion until your next turn
     static final int STAT_GAIN_MIN = 1;           // clearing a locale: +1..+6 on every stat
@@ -40,10 +52,10 @@ public class randomizedrpg {
     /** SLASH / PIERCE / BLUNT are physical damage types (Strength); FIRE / ICE / LIGHTNING are magical (Intelligence). */
     enum Element { SLASH, PIERCE, BLUNT, FIRE, ICE, LIGHTNING }
 
-    enum Status { BLEED, POISON, BURN, FROSTBITE }
+    enum Status { BLEED, POISON, BURN, FROSTBITE, STATIC }
 
     /** Special tags used by the boss to tie moves to its body parts. */
-    enum MoveTag { NONE, BEAK, BITE, CLAWS, TAIL, POUNCE }
+    enum MoveTag { NONE, BEAK, BITE, CLAWS, TAIL, TAIL_PIERCE, POUNCE, SLAM, DIVE, RAILGUN, BREATH }
 
     /** FRONT = high risk / high reward, BACK = safer but weaker. */
     enum Position {
@@ -129,17 +141,28 @@ public class randomizedrpg {
 
     static class Weapon {
         final String name;
-        final Element type; // primary physical damage type: SLASH, PIERCE or BLUNT
+        final Element type; // primary physical damage type: SLASH, PIERCE or BLUNT (null = magic)
+        final boolean ranged; // ranged weapons (bow, staff) ignore the Back position's damage-dealt penalty
         final int armorPen; // defense ignored per hit
         final int price;
         final Move[] moves;
 
+        /** Melee weapon. */
         Weapon(String name, Element type, int armorPen, int price, Move... moves) {
+            this(name, type, false, armorPen, price, moves);
+        }
+
+        Weapon(String name, Element type, boolean ranged, int armorPen, int price, Move... moves) {
             this.name = name;
             this.type = type;
+            this.ranged = ranged;
             this.armorPen = armorPen;
             this.price = price;
             this.moves = moves;
+        }
+
+        String label() {
+            return (type == null ? "MAGIC" : type.toString()) + (ranged ? ", RANGED" : "");
         }
 
         String moveList() {
@@ -159,17 +182,19 @@ public class randomizedrpg {
         final Element resist;     // null = none
         final boolean fireproof;  // immune to burning
         final boolean iceproof;   // immune to frostbite
+        final boolean insulated;  // immune to static
         final int price;
         final int[] bonus;        // stat bonuses, indexed like STAT_NAMES
 
         Armor(String name, int defense, int damageReduction, Element resist, boolean fireproof, boolean iceproof,
-              int price, int[] bonus) {
+              boolean insulated, int price, int[] bonus) {
             this.name = name;
             this.defense = defense;
             this.damageReduction = damageReduction;
             this.resist = resist;
             this.fireproof = fireproof;
             this.iceproof = iceproof;
+            this.insulated = insulated;
             this.price = price;
             this.bonus = bonus;
         }
@@ -179,6 +204,7 @@ public class randomizedrpg {
             if (resist != null) text += ", resists " + resist;
             if (fireproof) text += ", fireproof";
             if (iceproof) text += ", iceproof";
+            if (insulated) text += ", insulated";
             for (int i = 0; i < bonus.length; i++) {
                 if (bonus[i] != 0) text += String.format(", %+d %s", bonus[i], STAT_NAMES[i].substring(0, 3).toUpperCase());
             }
@@ -186,7 +212,7 @@ public class randomizedrpg {
         }
     }
 
-    enum ItemType { HEAL, DAMAGE, ANTIDOTE, WATER, WARM, SPELLBOOK, SCROLL }
+    enum ItemType { HEAL, MAXHEAL, DAMAGE, ANTIDOTE, WATER, WARM, TRAP, SMOKE, FLASH, SPELLBOOK, SCROLL }
 
     static class Item {
         final String name;
@@ -194,17 +220,30 @@ public class randomizedrpg {
         final int value;      // heal amount / damage (unused otherwise)
         final int price;
         final int skillIndex; // books only: index into SKILLS, otherwise -1
+        final Status status;  // thrown items: status that may be inflicted (or null)
+        final double statusChance;
 
         Item(String name, ItemType type, int value, int price) {
-            this(name, type, value, price, -1);
+            this(name, type, value, price, -1, null, 0.0);
         }
 
         Item(String name, ItemType type, int value, int price, int skillIndex) {
+            this(name, type, value, price, skillIndex, null, 0.0);
+        }
+
+        /** Thrown item that may inflict a status. */
+        Item(String name, ItemType type, int value, int price, Status status, double statusChance) {
+            this(name, type, value, price, -1, status, statusChance);
+        }
+
+        Item(String name, ItemType type, int value, int price, int skillIndex, Status status, double statusChance) {
             this.name = name;
             this.type = type;
             this.value = value;
             this.price = price;
             this.skillIndex = skillIndex;
+            this.status = status;
+            this.statusChance = statusChance;
         }
 
         boolean isBook() {
@@ -219,10 +258,17 @@ public class randomizedrpg {
     static String describeItem(Item it, int bonus) {
         switch (it.type) {
             case HEAL: return "HEAL " + (it.value + bonus) + ", cures bleeding";
-            case DAMAGE: return "DAMAGE " + (it.value + bonus);
+            case MAXHEAL: return "heals to full HP, cures bleeding";
+            case DAMAGE:
+                String text = "DAMAGE " + (it.value + bonus);
+                if (it.status != null) text += ", " + (int) Math.round(it.statusChance * 100) + "% " + it.status.toString().toLowerCase();
+                return text;
             case ANTIDOTE: return "cures poison";
             case WATER: return "cures burning";
-            case WARM: return "cures frostbite";
+            case WARM: return "cures frostbite and static";
+            case TRAP: return "trap: the target loses its turn when it attacks in melee, 30% static";
+            case SMOKE: return "every attack on you misses for " + SMOKE_TURNS + " turns (cooldown " + SMOKE_COOLDOWN + ")";
+            case FLASH: return "enemy accuracy -30% for " + FLASH_TURNS + " turns (cooldown " + FLASH_COOLDOWN + ")";
             default: return "teaches " + SKILLS[it.skillIndex].name;
         }
     }
@@ -251,6 +297,14 @@ public class randomizedrpg {
         new Item("Antidote", ItemType.ANTIDOTE, 0, 25),
         new Item("Water Flask", ItemType.WATER, 0, 25),
         new Item("Warm Drink", ItemType.WARM, 0, 25),
+        new Item("Max Potion", ItemType.MAXHEAL, 0, 90),
+        new Item("Molotov Cocktail", ItemType.DAMAGE, 15, 35, Status.BURN, 0.30),
+        new Item("Poisoned Gas Canister", ItemType.DAMAGE, 15, 35, Status.POISON, 0.30),
+        new Item("Frozen Mist Canister", ItemType.DAMAGE, 15, 35, Status.FROSTBITE, 0.30),
+        new Item("Throwing Knife", ItemType.DAMAGE, 15, 25, Status.BLEED, 0.30),
+        new Item("Shock Trap", ItemType.TRAP, 0, 40),
+        new Item("Smoke Bomb", ItemType.SMOKE, 0, 45),
+        new Item("Flashbomb", ItemType.FLASH, 0, 45),
         new Item("Spellbook: Fireball", ItemType.SPELLBOOK, 0, 120, 0),
         new Item("Spellbook: Frost Shard", ItemType.SPELLBOOK, 0, 100, 1),
         new Item("Spellbook: Lightning Bolt", ItemType.SPELLBOOK, 0, 140, 2),
@@ -262,35 +316,42 @@ public class randomizedrpg {
     static final Weapon[] WEAPONS = {
         new Weapon("Iron Sword", Element.SLASH, 1, 80,
                 new Move("Slash", 10, 0.95, Element.SLASH),
-                new Move("Thrust", 14, 0.80, Element.PIERCE),
-                new Move("Cleave", 20, 0.60, Element.SLASH)),
-        new Weapon("Hunter's Bow", Element.PIERCE, 2, 110,
+                new Move("Thrust", 14, 0.90, Element.PIERCE),
+                new Move("Cleave", 20, 0.80, Element.SLASH)),
+        new Weapon("Hunter's Bow", Element.PIERCE, true, 2, 110,
                 new Move("Quick Shot", 8, 1.00, Element.PIERCE),
-                new Move("Aimed Shot", 16, 0.75, Element.PIERCE),
-                new Move("Volley", 22, 0.55, Element.PIERCE)),
+                new Move("Aimed Shot", 16, 0.85, Element.PIERCE),
+                new Move("Volley", 22, 0.75, Element.PIERCE)),
         new Weapon("Rusty Dagger", Element.PIERCE, 4, 70,
                 new Move("Stab", 7, 1.00, Element.PIERCE),
-                new Move("Backstab", 13, 0.85, Element.SLASH)),
+                new Move("Backstab", 13, 0.90, Element.SLASH)),
         new Weapon("War Axe", Element.SLASH, 3, 130,
-                new Move("Chop", 14, 0.85, Element.SLASH),
-                new Move("Smash", 24, 0.55, Element.BLUNT)),
+                new Move("Chop", 14, 0.90, Element.SLASH),
+                new Move("Smash", 24, 0.70, Element.BLUNT)),
         new Weapon("Spiked Mace", Element.BLUNT, 2, 100,
                 new Move("Bash", 12, 0.90, Element.BLUNT),
-                new Move("Crush", 18, 0.75, Element.BLUNT),
-                new Move("Skull Crack", 26, 0.50, Element.BLUNT)),
+                new Move("Crush", 18, 0.78, Element.BLUNT),
+                new Move("Skull Crack", 26, 0.70, Element.BLUNT)),
         new Weapon("Iron Spear", Element.PIERCE, 3, 100,
                 new Move("Lunge", 11, 0.95, Element.PIERCE),
                 new Move("Haft Strike", 9, 0.95, Element.BLUNT),
-                new Move("Impale", 21, 0.65, Element.PIERCE))
+                new Move("Impale", 21, 0.75, Element.PIERCE)),
+        // Magic staff: ranged, and its attacks are magic (they scale with Intelligence).
+        new Weapon("Arcane Staff", null, true, 2, 120,
+                new Move("Arcane Bolt", 10, 0.95, null, true, 0, false),
+                new Move("Flame Burst", 15, 0.85, Element.FIRE, true, 0, false),
+                new Move("Frost Spike", 15, 0.85, Element.ICE, true, 0, false),
+                new Move("Spark", 14, 0.90, Element.LIGHTNING, true, 0, false))
     };
 
     static final Armor[] ARMORS = {
-        new Armor("Leather Set", 2, 1, null, false, false, 60, statBlock(0, 1, 0, 0, 0, 0)),
-        new Armor("Chainmail Set", 5, 3, Element.SLASH, false, false, 140, statBlock(0, 0, 1, 0, 0, 0)),
-        new Armor("Ashen Mail", 6, 4, Element.FIRE, true, false, 200, statBlock(0, 0, 1, 0, 0, 0)),
-        new Armor("Frostguard Mail", 7, 5, Element.ICE, false, true, 240, statBlock(0, 0, 2, 0, 0, 0)),
-        new Armor("Knight's Plate", 8, 6, Element.BLUNT, false, false, 260, statBlock(1, -1, 2, 0, 0, 0)),
-        new Armor("Dragonscale Set", 12, 10, Element.FIRE, true, false, 520, statBlock(2, 0, 2, 1, 0, 0))
+        new Armor("Leather Set", 2, 1, null, false, false, false, 60, statBlock(0, 1, 0, 0, 0, 0)),
+        new Armor("Chainmail Set", 5, 3, Element.SLASH, false, false, false, 140, statBlock(0, 0, 1, 0, 0, 0)),
+        new Armor("Ashen Mail", 6, 4, Element.FIRE, true, false, false, 200, statBlock(0, 0, 1, 0, 0, 0)),
+        new Armor("Frostguard Mail", 7, 5, Element.ICE, false, true, false, 240, statBlock(0, 0, 2, 0, 0, 0)),
+        new Armor("Stormguard Mail", 7, 5, Element.LIGHTNING, false, false, true, 250, statBlock(0, 1, 1, 0, 0, 0)),
+        new Armor("Knight's Plate", 8, 6, Element.BLUNT, false, false, false, 260, statBlock(1, -1, 2, 0, 0, 0)),
+        new Armor("Dragonscale Set", 12, 10, Element.FIRE, true, false, false, 520, statBlock(2, 0, 2, 1, 0, 0))
     };
 
     // ---------------- Cockatrice (boss) moves ----------------
@@ -374,7 +435,7 @@ public class randomizedrpg {
 
     static final EnemyType SKELETON_ARCHER = new EnemyType("Skeleton Archer", 90, statBlock(7, 10, 8, 4, 6, 9), 1, 0, 3,
             Element.BLUNT, Element.PIERCE,
-            new Weapon("Shortbow", Element.PIERCE, 0, 0,
+            new Weapon("Shortbow", Element.PIERCE, true, 0, 0,
                     new Move("Arrow", 10, 0.90, Element.PIERCE),
                     new Move("Piercing Shot", 17, 0.60, Element.PIERCE)),
             15, 25);
@@ -468,9 +529,56 @@ public class randomizedrpg {
     static final Move FOG_CLOAK = new Move("Fog Cloak", 0, 1.0, null, false, 0, false);
     static final Move LOCK_ON = new Move("Lock On", 0, 1.0, null, false, 0, false);
 
+    // ---------------- Steelscale Wyvern / Calamitatum Rex moves ----------------
+    static final Move DRAGON_BITE = new Move("Bite", 17, 0.85, Element.PIERCE, false, 0, false,
+            MoveTag.BITE, 1, 1, Status.BLEED, 0.10);
+    static final Move DRAGON_DIVEBOMB = new Move("Divebomb", 30, 0.70, Element.BLUNT, false, 0, false,
+            MoveTag.DIVE, 1, 1, null, 0.0);
+    static final Move DRAGON_TAIL_SWIPE = new Move("Tail Swipe", 15, 0.90, Element.SLASH, false, 0, false,
+            MoveTag.TAIL, 1, 1, null, 0.0);
+    static final Move DRAGON_TAIL_PIERCE = new Move("Tail Pierce", 18, 0.77, Element.PIERCE, false, 0, false,
+            MoveTag.TAIL_PIERCE, 1, 1, Status.BLEED, 0.20);
+    static final Move DRAGON_RAILGUN = new Move("Railgun", 25, 0.75, Element.LIGHTNING, false, 0, false,
+            MoveTag.RAILGUN, 1, 1, Status.STATIC, 0.20);
+    static final Move WYVERN_SWIPES = new Move("Raging Swipes", 5, 0.80, Element.SLASH, false, 0, false,
+            MoveTag.CLAWS, 2, 6, Status.BLEED, 0.05);
+    static final Move WYVERN_SLAM = new Move("Slam", 17, 0.90, Element.BLUNT, false, 0, false,
+            MoveTag.SLAM, 1, 1, null, 0.0);
+    static final Move THUNDER_CLOAK = new Move("Thunder Cloak", 0, 1.0, null, false, 0, false);
+    static final Move REX_SWIPES = new Move("Draconic Swipes", 8, 0.80, Element.SLASH, false, 0, false,
+            MoveTag.CLAWS, 2, 6, null, 0.0);
+    static final Move REX_FLAMESHOT = new Move("Flameshot", 25, 0.75, Element.FIRE, false, 0, false,
+            MoveTag.BREATH, 1, 1, Status.BURN, 0.20);
+    static final Move REX_FROSTWIND = new Move("Frostwind Breath", 25, 0.75, Element.ICE, false, 0, false,
+            MoveTag.BREATH, 1, 1, Status.FROSTBITE, 0.20);
+
+    // ---------------- Stormspire enemies ----------------
+    static final EnemyType STORMFEATHER_EAGLE = new EnemyType("Stormfeather Eagle", 95, statBlock(8, 18, 5, 3, 7, 10), 0, 0, 1,
+            Element.ICE, Element.LIGHTNING,
+            new Weapon("Storm Talons", Element.SLASH, 0, 0,
+                    new Move("Talon Rake", 13, 0.90, Element.SLASH, Status.BLEED, 0.20),
+                    new Move("Static Dive", 17, 0.75, Element.LIGHTNING, Status.STATIC, 0.20)),
+            22, 34, 1, 2, null, 0, 0);
+
+    static final EnemyType STONE_GOLEM = new EnemyType("Stone Golem", 220, statBlock(10, 3, 9, 2, 4, 8), 6, 2, 2,
+            Element.ICE, Element.SLASH,
+            new Weapon("Stone Fists", Element.BLUNT, 0, 0,
+                    new Move("Slam", 14, 0.85, Element.BLUNT),
+                    new Move("Crush", 22, 0.60, Element.BLUNT)),
+            45, 65);
+
+    static final EnemyType STORMHIDE_ELK = new EnemyType("Stormhide Elk", 190, statBlock(12, 11, 10, 3, 6, 8), 4, 0, 0,
+            Element.BLUNT, Element.LIGHTNING,
+            new Weapon("Stormhide Antlers", Element.PIERCE, 0, 0,
+                    new Move("Gore", 18, 0.80, Element.PIERCE),
+                    new Move("Thunder Trample", 25, 0.65, Element.BLUNT, Status.STATIC, 0.15)),
+            34, 50);
+
+    static final EnemyType[] STORMSPIRE = { STORMFEATHER_EAGLE, STONE_GOLEM, STORMHIDE_ELK };
+
     // ==================================================================
-    // LOCALE 3 TEMPLATE - enemies
-    // Copy/rename these, fill in the TODOs, then register them in LOCALES below.
+    // UNUSED TEMPLATE (for the next locale) - enemies
+    // Copy/rename these, fill in the TODOs, then register them in LOCALES below. Not registered right now.
     // ==================================================================
     // TODO: rename, set HP, stats {STR, DEX, CON, INT, WIS, LCK}, defense, damage reduction, armor pen,
     //       weakness, resistance (use null for none), weapon moves, and gold range.
@@ -520,14 +628,17 @@ public class randomizedrpg {
         final EnemyType[] enemies;
         final Item welcomeItem;    // optional gift on arrival (null for none)
         final int welcomeQty;
+        final boolean bossOnly;    // no regular enemies: the boss is waiting for you
 
-        Locale(String name, String intro, String[] quiet, EnemyType[] enemies, Item welcomeItem, int welcomeQty) {
+        Locale(String name, String intro, String[] quiet, EnemyType[] enemies, Item welcomeItem, int welcomeQty,
+               boolean bossOnly) {
             this.name = name;
             this.intro = intro;
             this.quiet = quiet;
             this.enemies = enemies;
             this.welcomeItem = welcomeItem;
             this.welcomeQty = welcomeQty;
+            this.bossOnly = bossOnly;
         }
     }
 
@@ -538,7 +649,7 @@ public class randomizedrpg {
                     "The path is quiet. Only the wind keeps you company.",
                     "You find nothing but old footprints."
                 },
-                FOREST, null, 0),
+                FOREST, null, 0, false),
         new Locale("Snowy Peaks",
                 "The trees thin out and the air turns bitter. Before you rise the SNOWY PEAKS.",
                 new String[] {
@@ -546,16 +657,19 @@ public class randomizedrpg {
                     "A cold wind howls across the ridge. You see nothing.",
                     "You find only half-buried tracks in the snow."
                 },
-                SNOWY_PEAKS, ITEMS[5], 2), // Warm Drinks cure frostbite
-        // TEMPLATE LOCALE - TODO: rename, rewrite the intro/quiet text, and swap in your own enemies.
-        new Locale("Locale 3 (TEMPLATE)",
-                "[TEMPLATE] You arrive in the third locale. Replace this intro text with your own.",
+                SNOWY_PEAKS, ITEMS[5], 2, false), // Warm Drinks cure frostbite and static
+        new Locale("Stormspire",
+                "Black clouds crown a jagged tower of rock, and lightning dances along its edge. Before you rises the STORMSPIRE.",
                 new String[] {
-                    "[TEMPLATE] Nothing happens. Replace this flavor text.",
-                    "[TEMPLATE] The area is quiet. Replace this flavor text.",
-                    "[TEMPLATE] You find nothing. Replace this flavor text."
+                    "Thunder rolls overhead, but nothing happens.",
+                    "The air tingles with static. You find nothing.",
+                    "Rain lashes the cliffs. You find only wet stone."
                 },
-                TEMPLATE_LOCALE_ENEMIES, null, 0)
+                STORMSPIRE, ITEMS[5], 2, false),
+        new Locale("The Calamitous Alatar",
+                "Beyond the Stormspire the world tears open into the CALAMITOUS ALATAR - a battlefield where fire, frost and lightning take turns ruling the sky. Something ancient is waiting...",
+                new String[] { "The arena is silent. Something is watching you." },
+                new EnemyType[0], null, 0, true)   // boss only: unlocked once the other locales are cleared
     };
 
     /** Creates the boss of the given locale. Add a case here for every new locale. */
@@ -563,22 +677,10 @@ public class randomizedrpg {
         switch (localeIndex) {
             case 0: return new Cockatrice();
             case 1: return new FrostfangPhantom();
-            default: return new TemplateBoss();   // TODO: replace with your locale 3 boss
+            case 2: return new SteelscaleWyvern();
+            case 3: return new CalamitatumRex();
+            default: return new TemplateBoss();   // the unused template boss
         }
-    }
-
-    /** Builds the group of enemies for one encounter (snakes come in pairs, the alpha leads raptors). */
-    static Fighter[] spawnEncounter(EnemyType t) {
-        int main = t.groupMin + RNG.nextInt(t.groupMax - t.groupMin + 1);
-        int escorts = t.escort == null ? 0 : t.escortMin + RNG.nextInt(t.escortMax - t.escortMin + 1);
-        Fighter[] group = new Fighter[main + escorts];
-        for (int i = 0; i < main; i++) {
-            group[i] = t.spawn(main > 1 ? String.valueOf((char) ('A' + i)) : "");
-        }
-        for (int i = 0; i < escorts; i++) {
-            group[main + i] = t.escort.spawn(escorts > 1 ? String.valueOf((char) ('A' + i)) : "");
-        }
-        return group;
     }
 
     // ==================================================================
@@ -672,6 +774,10 @@ public class randomizedrpg {
         boolean poisoned = false;
         boolean burning = false;
         boolean frostbitten = false;
+        boolean shocked = false;       // static
+        boolean shockTrap = false;     // a Shock Trap has been set on this fighter
+        int flashTurns = 0;            // Flashbomb: accuracy -30% for this many of its turns
+        int smokeTurns = 0;            // Smoke Bomb: every attack on this fighter misses
 
         // Innate values (used by enemies; players get theirs from gear)
         int defenseBase = 0;
@@ -760,8 +866,17 @@ public class randomizedrpg {
             return 1.0;
         }
 
+        /** The element a move actually has right now (bosses can change it). */
+        Element elementOf(Move move) {
+            return move.element;
+        }
+
         double outgoingMult(Move move, int hit) {
-            return move.element == Element.FIRE ? fireMult() : 1.0;
+            return elementOf(move) == Element.FIRE ? fireMult() : 1.0;
+        }
+
+        /** Called when a melee attack lands on this fighter. */
+        void onMeleeHitBy(Fighter attacker, Move move) {
         }
 
         double accuracyOf(Move move, Fighter target) {
@@ -781,6 +896,10 @@ public class randomizedrpg {
             poisoned = false;
             burning = false;
             frostbitten = false;
+            shocked = false;
+            shockTrap = false;
+            flashTurns = 0;
+            smokeTurns = 0;
             stunned = false;
             infused = false;
             charged = false;
@@ -808,6 +927,11 @@ public class randomizedrpg {
         int bossesDefeated = 0;
         int locale = 0;                                  // index into LOCALES
         final boolean[] cleared = new boolean[LOCALES.length];
+        int skillPoints = 0;                             // 1 per victorious battle, spent on stats
+        boolean gameComplete = false;
+        int smokeCooldown = 0;                           // turns until a Smoke Bomb can be used again
+        int flashTimer = 0;                              // turns left on the Flashbomb effect
+        int flashCooldown = 0;                           // turns until a Flashbomb can be used again
         final boolean[] knownSkills = new boolean[SKILLS.length];
         final int[] skillUses = new int[SKILLS.length];
 
@@ -923,6 +1047,14 @@ public class randomizedrpg {
 
         /** Hook: effects of hitting a part that is still standing (stuns, etc.). */
         void onPartStruck(BodyPart part, Move move) {
+        }
+
+        /** True if the body part with this name exists and is destroyed. */
+        boolean partBroken(String partName) {
+            for (BodyPart bp : parts) {
+                if (bp.name.equals(partName)) return bp.broken();
+            }
+            return false;
         }
 
         /** Returns true on the turn the boss drops to 50% HP. */
@@ -1234,9 +1366,386 @@ public class randomizedrpg {
         }
     }
 
+    // ---------------- Shared behavior of the dragon-type bosses ----------------
+    static boolean isPhysical(Element e) {
+        return e == Element.SLASH || e == Element.PIERCE || e == Element.BLUNT;
+    }
+
+    abstract static class DragonBoss extends Boss {
+        boolean electricBoost = false;   // passive: the next attack deals +10%
+
+        DragonBoss(String name, int maxHp, int[] stats, Weapon weapon, BodyPart[] parts) {
+            super(name, maxHp, stats, weapon, parts);
+        }
+
+        abstract String boostMessage();
+
+        boolean spinesIntact() {
+            return !partBroken("Spines");
+        }
+
+        /** A severed tail costs 3 points of Dexterity. */
+        @Override
+        int totalStat(int stat) {
+            int v = super.totalStat(stat);
+            if (stat == DEX && partBroken("Tail")) v = Math.max(0, v - 3);
+            return v;
+        }
+
+        /** Enraged: it takes 10% more damage. */
+        @Override
+        double damageTakenMult() {
+            return enraged ? 1.10 : 1.0;
+        }
+
+        @Override
+        double accuracyOf(Move move, Fighter target) {
+            if (move.tag == MoveTag.TAIL && target.position == Position.BACK) return 0.40;
+            return move.hitChance;
+        }
+
+        @Override
+        double outgoingMult(Move move, int hit) {
+            double m = super.outgoingMult(move, hit);
+            if (enraged) m *= 1.15;
+            if (electricBoost) m *= 1.10;
+            if (move.tag == MoveTag.BITE && partBroken("Head")) m *= 0.60;
+            if (move.tag == MoveTag.TAIL && partBroken("Tail")) m *= 0.40;
+            if (move.tag == MoveTag.TAIL_PIERCE && partBroken("Tail")) m *= 0.30;
+            return m;
+        }
+
+        @Override
+        double statusChanceOf(Move move, Status status) {
+            if (move.tag == MoveTag.TAIL_PIERCE && partBroken("Tail") && status == Status.BLEED) return 0.0; // no more bleed
+            return super.statusChanceOf(move, status);
+        }
+
+        @Override
+        void onPartDestroyed(BodyPart part) {
+            if (part.name.equals("Head")) System.out.println("  Its bite attacks will deal 40% less damage.");
+            if (part.name.equals("Wings")) System.out.println("  It can no longer use Divebomb!");
+            if (part.name.equals("Spines")) System.out.println("  It can no longer channel electricity!");
+            if (part.name.equals("Tail")) {
+                System.out.println("  It loses its balance - its Dexterity drops by 3!");
+                System.out.println("  Tail swipes deal 60% less damage; tail pierces deal 70% less and no longer cause bleeding.");
+            }
+        }
+
+        @Override
+        void onPartStruck(BodyPart part, Move move) {
+            // Head: blunt hits have a 20% chance to stun
+            if (part.name.equals("Head") && move.element == Element.BLUNT && !stunned && RNG.nextInt(100) < 20) {
+                stunned = true;
+                System.out.println("  The blow rattles its skull - the " + name + " is STUNNED!");
+            }
+        }
+
+        /** Passive: 10% chance after its turn to boost its next attack by 10%. */
+        void rollPassive(boolean allowed) {
+            if (allowed && !electricBoost && RNG.nextInt(100) < 10) {
+                electricBoost = true;
+                System.out.println(boostMessage());
+            }
+        }
+    }
+
+    // ---------------- Stormspire boss ----------------
+    static class SteelscaleWyvern extends DragonBoss {
+        int cloakTurns = 0;   // Thunder Cloak
+
+        SteelscaleWyvern() {
+            super("Steelscale Wyvern", 550, statBlock(7, 12, 9, 3, 6, 10),
+                    new Weapon("Wyvern Body", Element.PIERCE, 0, 0, DRAGON_BITE),
+                    new BodyPart[] {
+                        new BodyPart("Head", 150, Element.BLUNT),
+                        new BodyPart("Spines", 100, Element.BLUNT),
+                        new BodyPart("Wings", 120, Element.SLASH, Element.PIERCE),
+                        new BodyPart("Wing Claws", 80, Element.BLUNT),
+                        new BodyPart("Tail", 100, Element.SLASH)
+                    });
+            defenseBase = 8;
+            damageReductionBase = 3;
+            armorPenBase = 2;
+            evasionBase = 0.10;
+            goldReward = 450;
+        }
+
+        @Override
+        String introText() {
+            return "Lightning splits the sky...\nThe STEELSCALE WYVERN dives out of the storm clouds!";
+        }
+
+        @Override
+        String defeatText() {
+            return "The Steelscale Wyvern crashes down and goes still. The storm begins to fade.";
+        }
+
+        @Override
+        String boostMessage() {
+            return "The charged electricity will boost the Wyvern's attack on the next turn!";
+        }
+
+        boolean cloakActive() {
+            return cloakTurns > 0 && spinesIntact();
+        }
+
+        /** Thunder Cloak: its physical attacks gain a LIGHTNING affinity. */
+        @Override
+        Element elementOf(Move move) {
+            if (cloakActive() && isPhysical(move.element)) return Element.LIGHTNING;
+            return move.element;
+        }
+
+        @Override
+        double outgoingMult(Move move, int hit) {
+            double m = super.outgoingMult(move, hit);
+            if (move.tag == MoveTag.SLAM && partBroken("Wing Claws")) m *= 0.70;
+            if (move.tag == MoveTag.CLAWS && partBroken("Wing Claws")) m *= 0.50;
+            if (cloakActive()) {
+                if (isPhysical(move.element)) m *= 1.10;
+                if (move.tag == MoveTag.RAILGUN) m *= 1.20;
+            }
+            return m;
+        }
+
+        /** Broken wing claws also reduce the bleed chance of its claws by 10%. */
+        @Override
+        double statusChanceOf(Move move, Status status) {
+            double c = super.statusChanceOf(move, status);
+            if (move.tag == MoveTag.CLAWS && status == Status.BLEED && partBroken("Wing Claws")) c = Math.max(0.0, c - 0.10);
+            return c;
+        }
+
+        /** Thunder Cloak: melee hits on the Wyvern have a 10% chance to inflict static on the attacker. */
+        @Override
+        void onMeleeHitBy(Fighter attacker, Move move) {
+            if (cloakActive() && RNG.nextInt(100) < 10) {
+                System.out.println("  Static crackles off the Wyvern's scales!");
+                applyStatus(attacker, Status.STATIC);
+            }
+        }
+
+        @Override
+        void onPartDestroyed(BodyPart part) {
+            super.onPartDestroyed(part);
+            if (part.name.equals("Wing Claws")) {
+                System.out.println("  Its slam is 30% weaker, its claw swipes 50% weaker, and they bleed less.");
+            }
+            if (part.name.equals("Spines")) cloakTurns = 0; // the cloak collapses
+        }
+
+        Move pickMove() {
+            Move[] pool = new Move[9];
+            int n = 0;
+            pool[n++] = DRAGON_BITE;
+            pool[n++] = WYVERN_SWIPES;
+            pool[n++] = WYVERN_SLAM;
+            pool[n++] = DRAGON_TAIL_SWIPE;
+            pool[n++] = DRAGON_TAIL_PIERCE;
+            if (!partBroken("Wings")) pool[n++] = DRAGON_DIVEBOMB;
+            if (spinesIntact()) {
+                pool[n++] = DRAGON_RAILGUN;
+                if (cloakTurns == 0) pool[n++] = THUNDER_CLOAK;
+            }
+            if (!charged) pool[n++] = CHARGE;
+            return pool[RNG.nextInt(n)];
+        }
+
+        @Override
+        void takeTurn(Fighter target) {
+            turn++;
+            if (checkEnrage()) {
+                System.out.println("The Steelscale Wyvern becomes ENRAGED! It hits harder (+15%) but takes 10% more damage!");
+            }
+
+            boolean boosted = electricBoost;
+            boolean castCloak = false;
+            Move move = pickMove();
+            if (move == THUNDER_CLOAK) {
+                cloakTurns = 3;
+                castCloak = true;
+                System.out.println("The Wyvern wraps itself in crackling lightning - THUNDER CLOAK!");
+                System.out.println("  (its physical attacks turn LIGHTNING and hit 10% harder, Railgun hits 20% harder,");
+                System.out.println("   and melee hits on it may shock you - for 3 turns)");
+            } else {
+                performAttack(this, target, move, null);
+            }
+
+            if (boosted) electricBoost = false;
+            if (!castCloak && cloakTurns > 0) cloakTurns--;
+            rollPassive(spinesIntact());
+        }
+    }
+
+    // ---------------- Calamitous Alatar boss (final) ----------------
+    static String arenaName(Element e) {
+        if (e == Element.FIRE) return "HEATWAVE";
+        if (e == Element.ICE) return "BLIZZARD";
+        if (e == Element.LIGHTNING) return "THUNDERSTORM";
+        return "";
+    }
+
+    static Status statusFor(Element e) {
+        if (e == Element.FIRE) return Status.BURN;
+        if (e == Element.ICE) return Status.FROSTBITE;
+        if (e == Element.LIGHTNING) return Status.STATIC;
+        return null;
+    }
+
+    static class CalamitatumRex extends DragonBoss {
+        int arenaLeft = 0;   // turns left in the current arena effect
+        int restLeft = 3;    // turns until the next arena effect (the first one begins on turn 3)
+
+        CalamitatumRex() {
+            super("Calamitatum Rex", 650, statBlock(8, 12, 10, 8, 6, 10),
+                    new Weapon("Rex Body", Element.PIERCE, 0, 0, DRAGON_BITE),
+                    new BodyPart[] {
+                        new BodyPart("Head", 150, Element.BLUNT),
+                        new BodyPart("Spines", 100, Element.BLUNT),
+                        new BodyPart("Throat", 100, Element.BLUNT, Element.SLASH, Element.PIERCE),
+                        new BodyPart("Wings", 80, Element.SLASH, Element.PIERCE),
+                        new BodyPart("Right Foreleg", 60, Element.BLUNT),
+                        new BodyPart("Left Foreleg", 60, Element.BLUNT),
+                        new BodyPart("Tail", 100, Element.SLASH)
+                    });
+            defenseBase = 6;
+            damageReductionBase = 3;
+            armorPenBase = 3;
+            evasionBase = 0.10;
+            goldReward = 0;
+        }
+
+        @Override
+        String introText() {
+            return "The ground shudders. Fire, frost and lightning churn in the sky above...\nThe CALAMITATUM REX rises to meet you!";
+        }
+
+        @Override
+        String defeatText() {
+            return "The Calamitatum Rex lets out a final roar and collapses. The sky clears.";
+        }
+
+        @Override
+        String boostMessage() {
+            return "The charged element will boost the Dragon's attack on the next turn!";
+        }
+
+        boolean throatWeakened() {
+            BodyPart throat = parts[2];
+            return throat.hp * 2 <= throat.maxHp;
+        }
+
+        /** Draconic Swipes and Tail Pierce take on the element of the current arena effect. */
+        @Override
+        Element elementOf(Move move) {
+            if (arenaEffect != null && (move.tag == MoveTag.CLAWS || move.tag == MoveTag.TAIL_PIERCE)) return arenaEffect;
+            return move.element;
+        }
+
+        @Override
+        double outgoingMult(Move move, int hit) {
+            double m = super.outgoingMult(move, hit);
+            // fire is weakened by 30% once the spines are destroyed
+            if (elementOf(move) == Element.FIRE && partBroken("Spines")) m *= 0.70;
+            // railgun, flameshot and frostwind breath are weakened by 30% at 50% throat HP
+            if ((move.tag == MoveTag.RAILGUN || move.tag == MoveTag.BREATH) && throatWeakened()) m *= 0.70;
+            if (move.tag == MoveTag.CLAWS) {
+                boolean rightClaw = hit % 2 == 1; // odd strikes use the right foreleg, even strikes the left
+                if (rightClaw && partBroken("Right Foreleg")) m *= 0.30;
+                if (!rightClaw && partBroken("Left Foreleg")) m *= 0.30;
+            }
+            return m;
+        }
+
+        @Override
+        void onPartDestroyed(BodyPart part) {
+            super.onPartDestroyed(part);
+            if (part.name.equals("Head")) System.out.println("  The blizzard can no longer be summoned.");
+            if (part.name.equals("Spines")) System.out.println("  The thunderstorm can no longer be summoned, and its fire is 30% weaker.");
+            if (part.name.equals("Throat")) {
+                System.out.println("  Railgun, Flameshot and Frostwind Breath are disabled, and the heatwave can no longer be summoned.");
+            }
+            if (part.name.equals("Right Foreleg")) System.out.println("  Its right claw strikes (odd swipes) deal 70% less damage.");
+            if (part.name.equals("Left Foreleg")) System.out.println("  Its left claw strikes (even swipes) deal 70% less damage.");
+        }
+
+        /** Destroying a part disables one arena effect. */
+        boolean arenaBlocked(Element e) {
+            if (e == Element.ICE) return partBroken("Head");
+            if (e == Element.LIGHTNING) return partBroken("Spines");
+            if (e == Element.FIRE) return partBroken("Throat");
+            return false;
+        }
+
+        void startArena() {
+            Element[] all = { Element.FIRE, Element.ICE, Element.LIGHTNING };
+            Element[] pool = new Element[3];
+            int n = 0;
+            for (int i = 0; i < all.length; i++) {
+                if (!arenaBlocked(all[i])) pool[n++] = all[i];
+            }
+            if (n == 0) {
+                restLeft = 1; // nothing left to summon
+                return;
+            }
+            arenaEffect = pool[RNG.nextInt(n)];
+            arenaLeft = enraged ? 4 : 3;
+            System.out.println("The arena shifts! A " + arenaName(arenaEffect) + " takes hold - every " + arenaEffect
+                    + " attack deals +20% damage and has +10% status chance, for everyone!");
+        }
+
+        /** Every 5 turns: 3 turns of an arena effect, then 2 turns of calm (4 and 1 when enraged). */
+        void advanceArena() {
+            if (arenaEffect != null) {
+                arenaLeft--;
+                if (arenaLeft <= 0 || arenaBlocked(arenaEffect)) {
+                    System.out.println("The " + arenaName(arenaEffect) + " fades. The arena returns to normal.");
+                    arenaEffect = null;
+                    restLeft = enraged ? 1 : 2;
+                }
+            } else {
+                restLeft--;
+                if (restLeft <= 0) startArena();
+            }
+        }
+
+        Move pickMove() {
+            Move[] pool = new Move[9];
+            int n = 0;
+            pool[n++] = DRAGON_BITE;
+            pool[n++] = REX_SWIPES;
+            pool[n++] = DRAGON_TAIL_SWIPE;
+            pool[n++] = DRAGON_TAIL_PIERCE;
+            if (!partBroken("Wings")) pool[n++] = DRAGON_DIVEBOMB;
+            if (!partBroken("Throat")) {
+                if (spinesIntact()) pool[n++] = DRAGON_RAILGUN;
+                pool[n++] = REX_FLAMESHOT;
+                pool[n++] = REX_FROSTWIND;
+            }
+            if (!charged) pool[n++] = CHARGE;
+            return pool[RNG.nextInt(n)];
+        }
+
+        @Override
+        void takeTurn(Fighter target) {
+            turn++;
+            if (checkEnrage()) {
+                System.out.println("The Calamitatum Rex becomes ENRAGED! It hits harder (+15%) but takes 10% more damage,");
+                System.out.println("and its arena effects now last 4 turns with only 1 turn of calm!");
+            }
+            advanceArena();
+
+            boolean boosted = electricBoost;
+            performAttack(this, target, pickMove(), null);
+            if (boosted) electricBoost = false;
+            rollPassive(true);
+        }
+    }
+
     // ==================================================================
-    // LOCALE 3 TEMPLATE - boss
-    // Copy this class for a new boss: rename it, then fill in every TODO.
+    // UNUSED TEMPLATE (for the next locale) - boss
+    // Copy this class for a new boss: rename it, then fill in every TODO. Not registered right now.
     // Useful hooks you can override (see Cockatrice / FrostfangPhantom for examples):
     //   outgoingMult / accuracyOf / statusChanceOf  - change its damage, accuracy or status chances
     //   baseEvasion / extraEvasion / damageTakenMult - change its evasion or the damage it takes
@@ -1379,6 +1888,7 @@ public class randomizedrpg {
             if (p.cleared[i]) clearedList += (clearedList.isEmpty() ? "" : ", ") + LOCALES[i].name;
         }
         System.out.println("Locale: " + LOCALES[p.locale].name + "   Cleared: " + (clearedList.isEmpty() ? "None" : clearedList));
+        System.out.println("Unspent skill points: " + p.skillPoints);
         System.out.printf("Enemies defeated since the last boss: %d/%d   Bosses defeated: %d%n",
                 p.killsSinceBoss, BOSS_INTERVAL, p.bossesDefeated);
     }
@@ -1414,14 +1924,21 @@ public class randomizedrpg {
         System.out.println("Burn -> -3 HP per turn, defense -15% (-25% and +5 damage if weak to fire).");
         System.out.println("        Cured by Water Flasks. Fireproof armor is immune.");
         System.out.println("Frostbite -> -2 HP per turn and Dexterity -10%. Cured by Warm Drinks.");
-        System.out.println("        Iceproof armor is immune.");
+        System.out.println("        Iceproof armor (or an ICE resistance) is immune.");
+        System.out.println("Static -> -1 HP per turn, 30% chance each turn to be paralyzed and lose the turn.");
+        System.out.println("        Cured by Warm Drinks. Insulated armor (or a LIGHTNING resistance) is immune.");
+        System.out.println("Fireproof armor / a FIRE resistance blocks burning too.");
         System.out.println(LINE);
         System.out.println("COMBAT:");
         System.out.println("Attack -> Weapon moves, Charge, and learned skills (limited uses per battle)");
         System.out.println("Charge -> No damage; your next attack that lands deals double damage");
         System.out.println("Guard -> Halves the next hit you take");
         System.out.println("Dodge -> Triples your evasion until your next turn (lasts as long as Guard)");
-        System.out.println("Item -> Use a potion, bomb, antidote, water flask or warm drink");
+        System.out.println("Item -> Potions, thrown items (15 damage + 30% status), cures, Shock Trap,");
+        System.out.println("        Smoke Bomb (enemy attacks miss for 2 turns) and Flashbomb (enemy accuracy -30%).");
+        System.out.println("        Smoke Bomb and Flashbomb have a 5 turn cooldown once their effect ends.");
+        System.out.println("Ranged weapons -> The bow and staff ignore the Back position's damage penalty.");
+        System.out.println("Staff -> Its attacks are magic: they scale with Intelligence.");
         System.out.println("Position -> Front hits harder but takes more; Back is safer but weaker");
         System.out.println("Retreat -> Chance to flee the fight");
         System.out.println("Fights can have several enemies; everyone acts in order of Dexterity.");
@@ -1434,7 +1951,11 @@ public class randomizedrpg {
         System.out.println("its main HP, and breaking parts weakens the boss.");
         System.out.println("Defeating a boss clears the locale: +" + STAT_GAIN_MIN + " to +" + STAT_GAIN_MAX + " on EVERY stat (rolled per stat),");
         System.out.println("and you move on to the next locale.");
-        System.out.println("Forest -> Snowy Peaks -> (locale 3 is a template for you to fill in)");
+        System.out.println("Forest -> Snowy Peaks -> Stormspire -> The Calamitous Alatar (final boss only).");
+        System.out.println("Beat the Calamitatum Rex to finish the game.");
+        System.out.println(LINE);
+        System.out.println("SKILL POINTS:");
+        System.out.println("You earn 1 skill point per victorious battle and choose which stat to raise.");
         System.out.println(LINE);
         System.out.println("EXPLORING:");
         System.out.println("[1] Nothing happens  [2] You find an item  [3] A fight begins  [4] A shop appears");
@@ -1446,11 +1967,11 @@ public class randomizedrpg {
         System.out.println(LINE);
         System.out.println("==================CREDITS=================");
         System.out.println(LINE);
-        System.out.println("Insert Group");
-        System.out.println("Insert Name");
-        System.out.println("Insert Name");
-        System.out.println("Insert Name");
-        System.out.println("Insert Name");
+        System.out.println("BSIT-1B Group 8");
+        System.out.println("Dhereck Kharl");
+        System.out.println("Andrei Thomas Lumaking");
+        System.out.println("James V. Tiglao");
+        System.out.println("Paulene Nicole Yumul");
     }
 
     // ==================================================================
@@ -1458,22 +1979,62 @@ public class randomizedrpg {
     // ==================================================================
     static void adventure(Player p) {
         boolean inGame = true;
-        while (inGame && p.isAlive()) {
+        while (inGame && p.isAlive() && !p.gameComplete) {
+            Locale here = LOCALES[p.locale];
             System.out.println(LINE);
-            System.out.printf("ADVENTURE (%s) - %s   HP %d/%d   Gold %d%n", LOCALES[p.locale].name, p.name, p.hp, p.maxHp, p.gold);
-            System.out.printf("Weapon: %s   Armor: %s   %s%n", p.weapon.name, p.armor == null ? "None" : p.armor.name,
-                    p.cleared[p.locale] ? "Locale cleared" : "Boss in: " + Math.max(0, BOSS_INTERVAL - p.killsSinceBoss) + " kills");
-            System.out.println("  [1] Explore  [2] Inventory  [3] Equipment  [4] Character  [0] Main Menu");
+            System.out.printf("ADVENTURE (%s) - %s   HP %d/%d   Gold %d%n", here.name, p.name, p.hp, p.maxHp, p.gold);
+            String progress = p.cleared[p.locale] ? "Locale cleared"
+                    : here.bossOnly ? "The boss awaits"
+                    : "Boss in: " + Math.max(0, BOSS_INTERVAL - p.killsSinceBoss) + " kills";
+            System.out.printf("Weapon: %s   Armor: %s   %s%n", p.weapon.name, p.armor == null ? "None" : p.armor.name, progress);
+            System.out.println("  [1] Explore  [2] Inventory  [3] Equipment  [4] Character  [5] Skill Points"
+                    + (p.skillPoints > 0 ? " (" + p.skillPoints + ")" : "") + "  [0] Main Menu");
 
-            switch (readInt(0, 4)) {
+            switch (readInt(0, 5)) {
                 case 1: explore(p); break;
                 case 2: inventoryMenu(p); break;
                 case 3: equipmentMenu(p); break;
                 case 4: showCharacter(p); pause(); break;
+                case 5:
+                    if (p.skillPoints > 0) spendSkillPoints(p);
+                    else System.out.println("You have no skill points to spend. You earn 1 for every victorious battle.");
+                    break;
                 case 0:
                     System.out.println("Returning to the main menu. Choose CONTINUE to resume.");
                     inGame = false;
                     break;
+            }
+        }
+    }
+
+    /** Spends skill points: +1 to the base score of any stat. */
+    static void spendSkillPoints(Player p) {
+        String[] hints = {
+            "+2 physical damage", "+1% evasion, acts earlier", "-1.5 damage taken (and HP/regen)",
+            "+2 magic damage, learn skills", "better item finds", "crit chance"
+        };
+        while (p.skillPoints > 0) {
+            System.out.println(LINE);
+            System.out.println("SKILL POINTS: " + p.skillPoints + " unspent. Choose a stat to raise by 1:");
+            for (int i = 0; i < STAT_NAMES.length; i++) {
+                System.out.printf("  [%d] %-13s %2d (total %2d, mod %+d)  %s%n", i + 1, STAT_NAMES[i], p.scores[i],
+                        p.totalStat(i), p.mod(i), hints[i]);
+            }
+            System.out.println("  [0] Save for later");
+            int choice = readInt(0, STAT_NAMES.length);
+            if (choice == 0) return;
+
+            int stat = choice - 1;
+            p.scores[stat]++;
+            p.skillPoints--;
+            System.out.println(STAT_NAMES[stat] + " increased to " + p.scores[stat] + "!");
+            if (stat == CON) {
+                int oldMax = p.maxHp;
+                p.recalcMaxHp();
+                if (p.maxHp > oldMax) {
+                    p.heal(p.maxHp - oldMax);
+                    System.out.println("Max HP +" + (p.maxHp - oldMax) + " (now " + p.maxHp + ")");
+                }
             }
         }
     }
@@ -1489,7 +2050,7 @@ public class randomizedrpg {
         }
 
         // The boss ambushes you once enough enemies have fallen (until its locale is cleared).
-        if (p.killsSinceBoss >= BOSS_INTERVAL && !p.cleared[p.locale]) {
+        if ((p.killsSinceBoss >= BOSS_INTERVAL || LOCALES[p.locale].bossOnly) && !p.cleared[p.locale]) {
             Boss boss = createBoss(p.locale);
             System.out.println(boss.introText());
             resolveFight(p, new Fighter[] { boss }, true);
@@ -1552,6 +2113,9 @@ public class randomizedrpg {
             p.heal(recovered);
             System.out.println("\nVictory!");
             System.out.println("You loot " + gold + " gold (total " + p.gold + ") and recover " + recovered + " HP.");
+            p.skillPoints++;
+            System.out.println("You earned 1 skill point!");
+            spendSkillPoints(p);
         }
 
         if (boss) {
@@ -1581,6 +2145,18 @@ public class randomizedrpg {
         System.out.println();
         System.out.println(boss.defeatText());
         System.out.println("*** " + done.name.toUpperCase() + " CLEARED! ***");
+
+        // Clearing the last locale finishes the game.
+        if (p.locale + 1 >= LOCALES.length) {
+            System.out.println();
+            System.out.println(LINE);
+            System.out.println("Congratulations on beating the game! We hope you enjoyed playing it as much as we enjoyed making it.");
+            System.out.println(LINE);
+            p.gameComplete = true;
+            pause();
+            return;
+        }
+
         System.out.println("The victory sharpens you. Every stat increases:");
 
         int oldMax = p.maxHp;
@@ -1677,19 +2253,19 @@ public class randomizedrpg {
             Item item = inv.items[choice - 1];
             if (item.isBook()) {
                 studyBook(p, choice - 1);
-            } else if (item.type == ItemType.HEAL) {
+            } else if (item.type == ItemType.HEAL || item.type == ItemType.MAXHEAL) {
                 if (p.hp == p.maxHp) {
                     System.out.println("You are already at full HP.");
                 } else {
-                    int amount = item.value + p.potency();
+                    int amount = item.type == ItemType.MAXHEAL ? p.maxHp - p.hp : item.value + p.potency();
                     inv.removeOne(choice - 1);
                     p.heal(amount);
                     System.out.printf("You use %s and recover %d HP. (%d/%d HP)%n", item.name, amount, p.hp, p.maxHp);
                 }
-            } else if (item.type == ItemType.DAMAGE) {
-                System.out.println(item.name + " can only be used in battle.");
-            } else {
+            } else if (item.type == ItemType.ANTIDOTE || item.type == ItemType.WATER || item.type == ItemType.WARM) {
                 System.out.println("You have no ailment to cure right now. (Status effects only last during battle.)");
+            } else {
+                System.out.println(item.name + " can only be used in battle.");
             }
         }
     }
@@ -1719,7 +2295,7 @@ public class randomizedrpg {
             System.out.println("Weapons:");
             for (int i = 0; i < inv.weaponCount; i++) {
                 Weapon w = inv.weapons[i];
-                System.out.printf("  [%d] %s%s  [%s, Armor Pen %d]%n", i + 1, w.name, w == p.weapon ? " (equipped)" : "", w.type, w.armorPen);
+                System.out.printf("  [%d] %s%s  [%s, Armor Pen %d]%n", i + 1, w.name, w == p.weapon ? " (equipped)" : "", w.label(), w.armorPen);
                 System.out.println("      Moves: " + w.moveList());
             }
             System.out.println("Armor:");
@@ -1767,7 +2343,7 @@ public class randomizedrpg {
     static String offerInfo(int idx) {
         if (idx < ITEMS.length) return describeItem(ITEMS[idx], 0);
         idx -= ITEMS.length;
-        if (idx < WEAPONS.length) return WEAPONS[idx].type + " weapon, Armor Pen " + WEAPONS[idx].armorPen + "; " + WEAPONS[idx].moveList();
+        if (idx < WEAPONS.length) return WEAPONS[idx].label() + " weapon, Armor Pen " + WEAPONS[idx].armorPen + "; " + WEAPONS[idx].moveList();
         return ARMORS[idx - WEAPONS.length].info();
     }
 
@@ -1871,6 +2447,10 @@ public class randomizedrpg {
         p.position = Position.FRONT;
         p.clearStatuses();
         p.resetSkillUses();
+        p.smokeCooldown = 0;
+        p.flashTimer = 0;
+        p.flashCooldown = 0;
+        arenaEffect = null;
         for (Fighter e : enemies) {
             e.position = Position.FRONT;
             e.clearStatuses();
@@ -1910,6 +2490,7 @@ public class randomizedrpg {
                 } else {
                     enemyTurn(f, p);
                 }
+                if (f != p && f.flashTurns > 0) f.flashTurns--; // Flashbomb counts the monster's own turns
             }
         }
 
@@ -1917,6 +2498,7 @@ public class randomizedrpg {
         for (Fighter e : enemies) {
             e.clearStatuses();
         }
+        arenaEffect = null;
         if (fled) return Outcome.FLED;
 
         printStatus(p, enemies);
@@ -1963,6 +2545,18 @@ public class randomizedrpg {
                 System.out.println("The frostbite on " + f.name + " thaws.");
             }
         }
+        if (f.shocked && f.isAlive()) {
+            f.takeDamage(STATIC_DAMAGE);
+            System.out.printf("%s is jolted by static for %d damage. (%d/%d HP)%n", f.name, STATIC_DAMAGE, f.hp, f.maxHp);
+            if (f.isAlive() && RNG.nextInt(100) < STATIC_PARALYZE_CHANCE) {
+                f.stunned = true;
+                System.out.println(f.name + " is paralyzed and will lose a turn!");
+            }
+            if (f.isAlive() && RNG.nextInt(100) < NATURAL_CURE_CHANCE) {
+                f.shocked = false;
+                System.out.println("The static around " + f.name + " dissipates.");
+            }
+        }
         if (!f.isAlive()) {
             System.out.println(f.name + " collapses!");
             return;
@@ -1974,7 +2568,22 @@ public class randomizedrpg {
         }
     }
 
+    /** Fireproof/iceproof/insulated armor, or a resistance to the element, makes a fighter immune. */
+    static boolean immuneTo(Fighter t, Status s) {
+        Element res = t.activeResistance();
+        switch (s) {
+            case BURN: return (t.armor != null && t.armor.fireproof) || res == Element.FIRE;
+            case FROSTBITE: return (t.armor != null && t.armor.iceproof) || res == Element.ICE;
+            case STATIC: return (t.armor != null && t.armor.insulated) || res == Element.LIGHTNING;
+            default: return false;
+        }
+    }
+
     static void applyStatus(Fighter target, Status status) {
+        if (immuneTo(target, status)) {
+            System.out.println("  " + target.name + " is immune to " + status.toString().toLowerCase() + "!");
+            return;
+        }
         switch (status) {
             case BLEED:
                 if (!target.bleeding) {
@@ -1988,20 +2597,16 @@ public class randomizedrpg {
                 System.out.println("  " + target.name + " is poisoned! HP regeneration is disabled.");
                 break;
             case BURN:
-                if (target.armor != null && target.armor.fireproof) {
-                    System.out.println("  " + target.name + "'s fireproof armor shrugs off the flames.");
-                } else {
-                    target.burning = true;
-                    System.out.println("  " + target.name + " catches fire! Defense is reduced.");
-                }
+                target.burning = true;
+                System.out.println("  " + target.name + " catches fire! Defense is reduced.");
                 break;
             case FROSTBITE:
-                if (target.armor != null && target.armor.iceproof) {
-                    System.out.println("  " + target.name + "'s iceproof armor shrugs off the cold.");
-                } else {
-                    target.frostbitten = true;
-                    System.out.println("  " + target.name + " is frostbitten! Dexterity is reduced by 10%.");
-                }
+                target.frostbitten = true;
+                System.out.println("  " + target.name + " is frostbitten! Dexterity is reduced by 10%.");
+                break;
+            case STATIC:
+                target.shocked = true;
+                System.out.println("  " + target.name + " is shocked by static! (-1 HP per turn, may be paralyzed)");
                 break;
         }
     }
@@ -2012,6 +2617,10 @@ public class randomizedrpg {
         if (f.poisoned) text += " (Poisoned)";
         if (f.burning) text += " (Burning)";
         if (f.frostbitten) text += " (Frostbitten)";
+        if (f.shocked) text += " (Static)";
+        if (f.smokeTurns > 0) text += " (Smoke " + f.smokeTurns + ")";
+        if (f.flashTurns > 0) text += " (Flashed " + f.flashTurns + ")";
+        if (f.shockTrap) text += " (Shock Trap)";
         if (f.stunned) text += " (Stunned)";
         return text;
     }
@@ -2022,9 +2631,32 @@ public class randomizedrpg {
     static boolean playerTurn(Player p, Fighter[] enemies) {
         p.guarding = false; // guard and dodge last until the player's next turn
         p.dodging = false;
+
+        // Smoke Bomb / Flashbomb timers (the cooldown starts when the effect ends)
+        if (p.smokeTurns > 0) {
+            p.smokeTurns--;
+            if (p.smokeTurns == 0) {
+                p.smokeCooldown = SMOKE_COOLDOWN;
+                System.out.println("The smoke around you clears.");
+            }
+        } else if (p.smokeCooldown > 0) {
+            p.smokeCooldown--;
+        }
+        if (p.flashTimer > 0) {
+            p.flashTimer--;
+            if (p.flashTimer == 0) p.flashCooldown = FLASH_COOLDOWN;
+        } else if (p.flashCooldown > 0) {
+            p.flashCooldown--;
+        }
+
         System.out.println();
         startTurn(p);
         if (!p.isAlive()) return false;
+        if (p.stunned) {
+            p.stunned = false;
+            System.out.println(p.name + " can't act this turn!");
+            return false;
+        }
 
         printStatus(p, enemies);
         tryDetect(p, enemies);
@@ -2118,6 +2750,10 @@ public class randomizedrpg {
                         affinityText(e.weakness, e.weaknessKnown), affinityText(e.resistance, e.resistanceKnown));
             }
         }
+        if (arenaEffect != null) {
+            System.out.println("  ARENA: " + arenaName(arenaEffect) + " - all " + arenaEffect
+                    + " attacks deal +20% damage and have +10% status chance (everyone)");
+        }
         System.out.println("==============================================");
     }
 
@@ -2197,6 +2833,7 @@ public class randomizedrpg {
                 int accuracy = (int) Math.round(Math.min(1.0, m.hitChance + p.dexBonus()) * 100);
                 text = String.format("%s [%s] (power %d, accuracy %d%%)", m.name,
                         m.element == null ? "NONE" : m.element.toString(), m.power, accuracy);
+                if (skillOf[i] < 0 && m.magic) text += " - magic attack (Intelligence)";
                 if (skillOf[i] >= 0) text += String.format(" - %s skill, %d/%d uses left",
                         m.magic ? "magic" : "physical", p.skillUses[skillOf[i]], m.uses);
             }
@@ -2252,6 +2889,26 @@ public class randomizedrpg {
         return true;
     }
 
+    static String cooldownNote(Player p, Item it) {
+        if (it.type == ItemType.SMOKE) {
+            if (p.smokeTurns > 0) return " [active]";
+            if (p.smokeCooldown > 0) return " [cooldown " + p.smokeCooldown + "]";
+        }
+        if (it.type == ItemType.FLASH) {
+            if (p.flashTimer > 0) return " [active]";
+            if (p.flashCooldown > 0) return " [cooldown " + p.flashCooldown + "]";
+        }
+        return "";
+    }
+
+    static void cureBleeding(Fighter f) {
+        if (f.bleeding) {
+            f.bleeding = false;
+            f.bleedDamage = BLEED_START;
+            System.out.println("  The bleeding stops.");
+        }
+    }
+
     static boolean playerItem(Player p, Fighter[] enemies) {
         Inventory inv = p.inventory;
         if (inv.itemCount == 0) {
@@ -2261,7 +2918,7 @@ public class randomizedrpg {
         System.out.println("Choose an item:");
         for (int i = 0; i < inv.itemCount; i++) {
             Item it = inv.items[i];
-            String info = it.isBook() ? "study outside of battle" : describeItem(it, p.potency());
+            String info = it.isBook() ? "study outside of battle" : describeItem(it, p.potency()) + cooldownNote(p, it);
             System.out.printf("  [%d] %s x%d (%s)%n", i + 1, it.name, inv.counts[i], info);
         }
         System.out.println("  [0] Back");
@@ -2269,63 +2926,115 @@ public class randomizedrpg {
         int choice = readInt(0, inv.itemCount);
         if (choice == 0) return false;
 
-        Item item = inv.items[choice - 1];
+        int slot = choice - 1;
+        Item item = inv.items[slot];
         int amount = item.value + p.potency();
 
         if (item.isBook()) {
             System.out.println("You can't study in the middle of a battle!");
             return false;
         }
-        if (item.type == ItemType.HEAL) {
-            inv.removeOne(choice - 1);
-            p.heal(amount);
-            System.out.printf("%s uses %s and recovers %d HP. (%d/%d HP)%n", p.name, item.name, amount, p.hp, p.maxHp);
-            if (p.bleeding) {
-                p.bleeding = false;
-                p.bleedDamage = BLEED_START;
-                System.out.println("  The bleeding stops.");
-            }
-            return true;
-        }
-        if (item.type == ItemType.ANTIDOTE) {
-            if (!p.poisoned) {
-                System.out.println("You aren't poisoned.");
-                return false;
-            }
-            inv.removeOne(choice - 1);
-            p.poisoned = false;
-            System.out.println(p.name + " drinks the antidote. The poison is gone!");
-            return true;
-        }
-        if (item.type == ItemType.WATER) {
-            if (!p.burning) {
-                System.out.println("You aren't burning.");
-                return false;
-            }
-            inv.removeOne(choice - 1);
-            p.burning = false;
-            System.out.println(p.name + " douses the flames with water!");
-            return true;
-        }
 
-        if (item.type == ItemType.WARM) {
-            if (!p.frostbitten) {
-                System.out.println("You aren't frostbitten.");
-                return false;
-            }
-            inv.removeOne(choice - 1);
-            p.frostbitten = false;
-            System.out.println(p.name + " sips the warm drink. The frostbite fades!");
-            return true;
-        }
+        switch (item.type) {
+            case HEAL:
+                inv.removeOne(slot);
+                p.heal(amount);
+                System.out.printf("%s uses %s and recovers %d HP. (%d/%d HP)%n", p.name, item.name, amount, p.hp, p.maxHp);
+                cureBleeding(p);
+                return true;
 
-        // Bomb: flat damage to the chosen enemy (a boss's main HP if it is the target)
-        Fighter target = chooseTarget(enemies);
-        if (target == null) return false;
-        inv.removeOne(choice - 1);
-        target.takeDamage(amount);
-        System.out.printf("%s throws %s! %s takes %d damage. (%d/%d HP)%n", p.name, item.name, target.name, amount, target.hp, target.maxHp);
-        return true;
+            case MAXHEAL:
+                if (p.hp == p.maxHp) {
+                    System.out.println("You are already at full HP.");
+                    return false;
+                }
+                inv.removeOne(slot);
+                p.hp = p.maxHp;
+                System.out.printf("%s drinks the %s and is restored to full health! (%d/%d HP)%n", p.name, item.name, p.hp, p.maxHp);
+                cureBleeding(p);
+                return true;
+
+            case ANTIDOTE:
+                if (!p.poisoned) {
+                    System.out.println("You aren't poisoned.");
+                    return false;
+                }
+                inv.removeOne(slot);
+                p.poisoned = false;
+                System.out.println(p.name + " drinks the antidote. The poison is gone!");
+                return true;
+
+            case WATER:
+                if (!p.burning) {
+                    System.out.println("You aren't burning.");
+                    return false;
+                }
+                inv.removeOne(slot);
+                p.burning = false;
+                System.out.println(p.name + " douses the flames with water!");
+                return true;
+
+            case WARM:
+                if (!p.frostbitten && !p.shocked) {
+                    System.out.println("You aren't frostbitten or shocked.");
+                    return false;
+                }
+                inv.removeOne(slot);
+                p.frostbitten = false;
+                p.shocked = false;
+                System.out.println(p.name + " sips the warm drink. The frostbite and static fade!");
+                return true;
+
+            case SMOKE:
+                if (p.smokeTurns > 0 || p.smokeCooldown > 0) {
+                    System.out.println("You can't use a Smoke Bomb yet. " + cooldownNote(p, item).trim());
+                    return false;
+                }
+                inv.removeOne(slot);
+                p.smokeTurns = SMOKE_TURNS;
+                System.out.printf("%s throws a Smoke Bomb! Every attack on you will miss for %d turns.%n", p.name, SMOKE_TURNS);
+                return true;
+
+            case FLASH: {
+                if (p.flashTimer > 0 || p.flashCooldown > 0) {
+                    System.out.println("You can't use a Flashbomb yet. " + cooldownNote(p, item).trim());
+                    return false;
+                }
+                Fighter target = chooseTarget(enemies);
+                if (target == null) return false;
+                inv.removeOne(slot);
+                target.flashTurns = FLASH_TURNS;
+                p.flashTimer = FLASH_TURNS;
+                System.out.printf("%s hurls a Flashbomb! %s is blinded: accuracy -30%% for %d turns.%n", p.name, target.name, FLASH_TURNS);
+                return true;
+            }
+
+            case TRAP: {
+                Fighter target = chooseTarget(enemies);
+                if (target == null) return false;
+                if (target.shockTrap) {
+                    System.out.println("There is already a Shock Trap set for " + target.name + ".");
+                    return false;
+                }
+                inv.removeOne(slot);
+                target.shockTrap = true;
+                System.out.printf("%s sets a Shock Trap for %s. If it attacks in melee, it will be caught!%n", p.name, target.name);
+                return true;
+            }
+
+            default: {
+                // Thrown damage item: flat damage to the chosen enemy (a boss's main HP), and maybe a status
+                Fighter target = chooseTarget(enemies);
+                if (target == null) return false;
+                inv.removeOne(slot);
+                target.takeDamage(amount);
+                System.out.printf("%s throws %s! %s takes %d damage. (%d/%d HP)%n", p.name, item.name, target.name, amount, target.hp, target.maxHp);
+                if (item.status != null && target.isAlive() && RNG.nextDouble() < item.statusChance) {
+                    applyStatus(target, item.status);
+                }
+                return true;
+            }
+        }
     }
 
     static boolean playerPosition(Player p) {
@@ -2375,6 +3084,14 @@ public class randomizedrpg {
             return;
         }
 
+        // Shock Trap: triggers when its target tries a melee attack, cancelling that attack
+        if (attacker.shockTrap && isMelee(attacker, move)) {
+            attacker.shockTrap = false;
+            System.out.printf("%s charges in with %s... and trips the SHOCK TRAP! It can't move this turn!%n", attacker.name, move.name);
+            if (RNG.nextInt(100) < 30) applyStatus(attacker, Status.STATIC);
+            return;
+        }
+
         if (part != null) {
             System.out.printf("%s uses %s on the %s!%n", attacker.name, move.name, part.name);
         } else {
@@ -2390,10 +3107,23 @@ public class randomizedrpg {
         }
     }
 
+    /** Melee = a non-magical, non-elemental attack made with a melee weapon. */
+    static boolean isMelee(Fighter attacker, Move move) {
+        if (move.charge || move.power <= 0 || move.magic) return false;
+        if (move.element == Element.FIRE || move.element == Element.ICE || move.element == Element.LIGHTNING) return false;
+        return attacker.weapon == null || !attacker.weapon.ranged;
+    }
+
     static void strike(Fighter attacker, Fighter defender, Move move, BodyPart part, int hit, boolean multi) {
         String tag = multi ? "  Strike " + hit + ": " : "  ";
 
+        if (defender.smokeTurns > 0) {
+            System.out.println(tag + "the attack is lost in the smoke!");
+            return;
+        }
+
         double hitChance = attacker.accuracyOf(move, defender) + attacker.dexBonus() - defender.evasion();
+        if (attacker.flashTurns > 0) hitChance -= FLASH_ACCURACY_CUT; // blinded by a Flashbomb
         hitChance = Math.max(0.05, Math.min(1.0, hitChance));
         if (RNG.nextDouble() > hitChance) {
             System.out.println(tag + (multi ? "missed!" : "...but it missed!"));
@@ -2402,12 +3132,17 @@ public class randomizedrpg {
 
         // 1. Base damage: power + roll + 2 per point of TOTAL Strength (Intelligence for magic)
         double damage = move.power + RNG.nextInt(4) + 2 * attacker.totalStat(move.magic ? INT : STR);
+        Element el = attacker.elementOf(move); // may differ from move.element (Thunder Cloak, arena effects)
 
         // 2. Multipliers
-        damage *= attacker.position.damageDealtMult * defender.position.damageTakenMult;
+        // Ranged weapons (bow, staff) are not hurt by the Back position's damage-dealt penalty.
+        double dealt = attacker.position.damageDealtMult;
+        if (dealt < 1.0 && attacker.weapon != null && attacker.weapon.ranged) dealt = 1.0;
+        damage *= dealt * defender.position.damageTakenMult;
         damage *= attacker.outgoingMult(move, hit); // boss body-part effects and fire output
         damage *= defender.damageTakenMult();       // e.g. an enraged Frostfang Phantom takes 10% more
         if (attacker.infused) damage *= 1.10;
+        if (arenaEffect != null && el == arenaEffect) damage *= 1.20; // arena effect: boosts this element for everyone
 
         if (attacker.charged) {
             attacker.charged = false;
@@ -2418,19 +3153,19 @@ public class randomizedrpg {
             damage *= 2;
             System.out.println("  CRITICAL HIT!");
         }
-        if (move.element != null) {
-            if (part != null && part.isWeakTo(move.element)) {
+        if (el != null) {
+            if (part != null && part.isWeakTo(el)) {
                 damage *= 1.5;
                 part.known = true;
-                System.out.println("  The " + part.name + " is weak to " + move.element + "! (+50%)");
-            } else if (part == null && move.element == defender.weakness) {
+                System.out.println("  The " + part.name + " is weak to " + el + "! (+50%)");
+            } else if (part == null && el == defender.weakness) {
                 damage *= 1.5;
                 defender.weaknessKnown = true;
-                System.out.println("  " + defender.name + " is weak to " + move.element + "! (+50%)");
-            } else if (move.element == defender.activeResistance()) {
+                System.out.println("  " + defender.name + " is weak to " + el + "! (+50%)");
+            } else if (el == defender.activeResistance()) {
                 damage *= 0.5;
                 defender.resistanceKnown = true;
-                System.out.println("  " + defender.name + " resists " + move.element + "! (-50%)");
+                System.out.println("  " + defender.name + " resists " + el + "! (-50%)");
             }
         }
         if (defender.guarding) {
@@ -2466,9 +3201,12 @@ public class randomizedrpg {
         }
 
         if (defender.isAlive()) {
+            if (isMelee(attacker, move)) defender.onMeleeHitBy(attacker, move);
+            Status arenaStatus = arenaEffect == null ? null : statusFor(arenaEffect);
             Status[] all = Status.values();
             for (int i = 0; i < all.length; i++) {
                 double chance = attacker.statusChanceOf(move, all[i]);
+                if (all[i] == arenaStatus && el == arenaEffect) chance += 0.10; // arena effect: +10% status chance
                 if (chance > 0 && RNG.nextDouble() < chance) {
                     applyStatus(defender, all[i]);
                 }
@@ -2488,7 +3226,7 @@ public class randomizedrpg {
         if (!e.isAlive()) return;
         if (e.stunned) {
             e.stunned = false;
-            System.out.println(e.name + " is stunned and can't act!");
+            System.out.println(e.name + " can't act this turn!");
             return;
         }
 
@@ -2517,7 +3255,7 @@ public class randomizedrpg {
         if (!b.isAlive()) return;
         if (b.stunned) {
             b.stunned = false;
-            System.out.println(b.name + " is stunned and can't act!");
+            System.out.println(b.name + " can't act this turn!");
             return;
         }
         b.takeTurn(p);
@@ -2558,14 +3296,14 @@ public class randomizedrpg {
                     }
                     current = newCharacter();
                     adventure(current);
-                    if (!current.isAlive()) current = null; // game over clears the character
+                    if (!current.isAlive() || current.gameComplete) current = null; // game over / game won clears the character
                     break;
                 case 2:
                     if (current == null) {
                         System.out.println("No character in progress.");
                     } else {
                         adventure(current);
-                        if (!current.isAlive()) current = null;
+                        if (!current.isAlive() || current.gameComplete) current = null;
                     }
                     break;
                 case 3:
