@@ -441,29 +441,29 @@ public class randomizedrpg {
     static final EnemyType SNAKE = new EnemyType("Snake", 45, statBlock(4, 15, 3, 2, 6, 8), 0, 0, 1,
             Element.BLUNT, null,
             new Weapon("Fangs", Element.PIERCE, 0, 0,
-                    new Move("Bite", 7, 0.95, Element.PIERCE, Status.POISON, 0.30),
-                    new Move("Fang Strike", 12, 0.75, Element.PIERCE, Status.POISON, 0.50)),
+                    new Move("Bite", 9, 0.95, Element.PIERCE, Status.POISON, 0.30),
+                    new Move("Fang Strike", 14, 0.85, Element.PIERCE, Status.POISON, 0.50)),
             8, 14, 1, 2, null, 0, 0);
 
     static final EnemyType GOBLIN = new EnemyType("Goblin", 100, statBlock(6, 12, 5, 5, 6, 12), 2, 0, 1,
             Element.LIGHTNING, null,
             new Weapon("Rusty Knife", Element.PIERCE, 0, 0,
-                    new Move("Jab", 8, 0.95, Element.PIERCE),
-                    new Move("Wild Swing", 14, 0.65, Element.SLASH)),
+                    new Move("Jab", 9, 0.95, Element.PIERCE),
+                    new Move("Wild Swing", 15, 0.85, Element.SLASH)),
             10, 18);
 
     static final EnemyType SKELETON_ARCHER = new EnemyType("Skeleton Archer", 90, statBlock(7, 10, 8, 4, 6, 9), 1, 0, 3,
             Element.BLUNT, Element.PIERCE,
             new Weapon("Shortbow", Element.PIERCE, true, 0, 0,
                     new Move("Arrow", 10, 0.90, Element.PIERCE),
-                    new Move("Piercing Shot", 17, 0.60, Element.PIERCE)),
+                    new Move("Piercing Shot", 17, 0.80, Element.PIERCE)),
             15, 25);
 
     static final EnemyType GREAT_APE = new EnemyType("Great Ape", 140, statBlock(10, 5, 12, 2, 5, 6), 8, 2, 0,
             Element.PIERCE, Element.BLUNT,
             new Weapon("Ape Fists", Element.BLUNT, 0, 0,
                     new Move("Pound", 14, 0.85, Element.BLUNT),
-                    new Move("Slam", 22, 0.60, Element.BLUNT)),
+                    new Move("Slam", 22, 0.65, Element.BLUNT)),
             25, 40);
 
     // Raptors have 40% less HP than the Raptor Alpha that leads them.
@@ -2954,8 +2954,8 @@ public class randomizedrpg {
         if (readInt(0, 1) == 0) return false;
 
         p.position = next;
-        System.out.println(p.name + " moves to the " + next + " line.");
-        return true;
+        System.out.println(p.name + " moves to the " + next + " line. (Repositioning is a free action - you may still act this turn.)");
+        return false; // free action: the turn is not used up
     }
 
     static boolean tryRetreat(Player p) {
@@ -3086,7 +3086,7 @@ public class randomizedrpg {
 
         // 3. Flat reductions, applied after damage is calculated
         int defense = Math.max(0, defender.defense() - attacker.armorPen());   // 1 defense ignored per Armor Pen
-        int conDeduction = (int) Math.round(1.2 * defender.totalStat(CON));    // 1.2 per point of TOTAL Con
+        int conDeduction = (int) Math.round(1.5 * defender.totalStat(CON));    // 1.5 per point of TOTAL Con
         int reduction = defender.damageReduction();                            // capped at 10
         damage -= defense + conDeduction + reduction;
         int finalDamage = Math.max(1, (int) Math.round(damage));
