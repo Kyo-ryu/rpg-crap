@@ -438,7 +438,7 @@ public class randomizedrpg {
 
     static final int RAPTOR_ALPHA_HP = 120;
 
-    static final EnemyType SNAKE = new EnemyType("Snake", 45, statBlock(4, 15, 3, 2, 6, 8), 0, 0, 1,
+    static final EnemyType SNAKE = new EnemyType("Snake", 85, statBlock(4, 15, 3, 2, 6, 8), 0, 0, 1,
             Element.BLUNT, null,
             new Weapon("Fangs", Element.PIERCE, 0, 0,
                     new Move("Bite", 9, 0.95, Element.PIERCE, Status.POISON, 0.30),
@@ -1881,8 +1881,13 @@ public class randomizedrpg {
 
     static void showCredits() {
         System.out.println(LINE);
-        System.out.println("==================CREDITS=================");
+        System.out.println("                  CREDITS                 ");
         System.out.println(LINE);
+        System.out.println("BSIT-1B Group 8");
+        System.out.println("Dhereck Kharl");
+        System.out.println("Andrei Thomas Lumaking");
+        System.out.println("James V. Tiglao");
+        System.out.println("Paulene Nicole Yumul");
     }
 
     // ==================================================================
