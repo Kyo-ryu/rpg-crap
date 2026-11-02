@@ -577,50 +577,7 @@ public class randomizedrpg {
     static final EnemyType[] STORMSPIRE = { STORMFEATHER_EAGLE, STONE_GOLEM, STORMHIDE_ELK };
 
     // ==================================================================
-    // UNUSED TEMPLATE (for the next locale) - enemies
-    // Copy/rename these, fill in the TODOs, then register them in LOCALES below. Not registered right now.
-    // ==================================================================
-    // TODO: rename, set HP, stats {STR, DEX, CON, INT, WIS, LCK}, defense, damage reduction, armor pen,
-    //       weakness, resistance (use null for none), weapon moves, and gold range.
-    static final EnemyType TEMPLATE_ENEMY_A = new EnemyType("Template Enemy A", 120, statBlock(8, 10, 8, 4, 6, 8), 2, 0, 1,
-            Element.FIRE, Element.ICE,
-            new Weapon("Template Weapon A", Element.SLASH, 0, 0,
-                    new Move("Template Attack", 12, 0.90, Element.SLASH),
-                    new Move("Template Heavy Attack", 20, 0.60, Element.BLUNT)),
-            20, 30);
-
-    // A group enemy: 1-2 of them appear together (the last two numbers before null are the group size).
-    static final EnemyType TEMPLATE_ENEMY_B = new EnemyType("Template Enemy B", 70, statBlock(6, 14, 5, 3, 6, 8), 0, 0, 1,
-            Element.BLUNT, null,
-            new Weapon("Template Weapon B", Element.PIERCE, 0, 0,
-                    new Move("Template Bite", 8, 0.95, Element.PIERCE, Status.POISON, 0.25)),   // example: 25% poison
-            12, 20, 1, 2, null, 0, 0);
-
-    // A leader that spawns with 1-2 escorts (the escort type is the 3rd value from the end).
-    static final EnemyType TEMPLATE_ESCORT = new EnemyType("Template Escort", 72, statBlock(6, 12, 5, 3, 6, 8), 1, 0, 0,
-            Element.LIGHTNING, null,
-            new Weapon("Template Escort Weapon", Element.SLASH, 0, 0,
-                    new Move("Template Slash", 9, 0.95, Element.SLASH, Status.BLEED, 0.25)),
-            8, 14);
-
-    static final EnemyType TEMPLATE_LEADER = new EnemyType("Template Leader", 120, statBlock(8, 13, 6, 3, 6, 8), 1, 0, 1,
-            Element.ICE, null,
-            new Weapon("Template Leader Weapon", Element.SLASH, 0, 0,
-                    new Move("Template Strike", 11, 0.95, Element.SLASH, Status.BLEED, 0.30)),
-            26, 38, 1, 1, TEMPLATE_ESCORT, 1, 2);
-
-    static final EnemyType[] TEMPLATE_LOCALE_ENEMIES = { TEMPLATE_ENEMY_A, TEMPLATE_ENEMY_B, TEMPLATE_LEADER };
-
-    // ==================================================================
-    // Locales
-    // HOW TO ADD A LOCALE (e.g. the 4th one):
-    //   1. Define its enemy types and an EnemyType[] array (see the TEMPLATE_* block above).
-    //   2. Write a boss class that extends Boss (copy TemplateBoss near the bottom of the boss section).
-    //   3. Add a `new Locale(...)` entry to LOCALES below, and a `case` for it in createBoss().
-    //   4. Optionally mention it in showMechanics().
-    // Clearing a locale (defeating its boss) marks it cleared, moves the player to the next locale,
-    // and gives +1..+6 to every stat.
-    // ==================================================================
+    
     static class Locale {
         final String name;
         final String intro;        // shown when the player arrives (null for the starting locale)
@@ -679,7 +636,7 @@ public class randomizedrpg {
             case 1: return new FrostfangPhantom();
             case 2: return new SteelscaleWyvern();
             case 3: return new CalamitatumRex();
-            default: return new TemplateBoss();   // the unused template boss
+            default: return new placeholder();
         }
     }
 
@@ -1744,66 +1701,6 @@ public class randomizedrpg {
     }
 
     // ==================================================================
-    // UNUSED TEMPLATE (for the next locale) - boss
-    // Copy this class for a new boss: rename it, then fill in every TODO. Not registered right now.
-    // Useful hooks you can override (see Cockatrice / FrostfangPhantom for examples):
-    //   outgoingMult / accuracyOf / statusChanceOf  - change its damage, accuracy or status chances
-    //   baseEvasion / extraEvasion / damageTakenMult - change its evasion or the damage it takes
-    //   onPartDestroyed / onPartStruck               - react to body parts breaking or being hit
-    // ==================================================================
-    static class TemplateBoss extends Boss {
-        static final int PART_ONE = 0, PART_TWO = 1;   // TODO: one index per body part
-
-        // TODO: define your boss's moves. Extra status? use the 14-argument Move constructor (see PHANTOM_BITE).
-        static final Move TEMPLATE_STRIKE = new Move("Template Strike", 15, 0.90, Element.SLASH, Status.BLEED, 0.10);
-        static final Move TEMPLATE_SLAM = new Move("Template Slam", 22, 0.75, Element.BLUNT);
-
-        TemplateBoss() {
-            super("Template Boss",                          // TODO: name
-                    400,                                    // TODO: main HP
-                    statBlock(6, 8, 6, 3, 6, 8),            // TODO: STR, DEX, CON, INT, WIS, LCK
-                    new Weapon("Template Boss Body", Element.SLASH, 0, 0, TEMPLATE_STRIKE, TEMPLATE_SLAM),
-                    new BodyPart[] {                        // TODO: name, HP and weaknesses for each part
-                        new BodyPart("Part One", 150, Element.BLUNT),
-                        new BodyPart("Part Two", 150, Element.SLASH)
-                    });
-            defenseBase = 2;                                // TODO
-            damageReductionBase = 0;                        // TODO
-            armorPenBase = 1;                               // TODO
-            evasionBase = 0.10;                             // TODO
-            goldReward = 400;                               // TODO
-        }
-
-        @Override
-        String introText() {
-            return "[TEMPLATE] A boss appears! Replace this intro text.";   // TODO
-        }
-
-        @Override
-        String defeatText() {
-            return "[TEMPLATE] The boss is defeated! Replace this text.";   // TODO
-        }
-
-        @Override
-        void onPartDestroyed(BodyPart part) {
-            // TODO: explain what happens when a part breaks, and apply it in the hooks above.
-            if (part == parts[PART_ONE]) System.out.println("  [TEMPLATE] Part One effect goes here.");
-            if (part == parts[PART_TWO]) System.out.println("  [TEMPLATE] Part Two effect goes here.");
-        }
-
-        @Override
-        void takeTurn(Fighter target) {
-            turn++;
-            if (checkEnrage()) {
-                System.out.println("[TEMPLATE] The boss becomes ENRAGED! Replace this text.");   // TODO: enrage effects
-            }
-            // TODO: replace this simple move choice with your boss's real move logic.
-            Move[] pool = { TEMPLATE_STRIKE, TEMPLATE_SLAM, CHARGE };
-            Move move = pool[RNG.nextInt(pool.length)];
-            if (move.charge && charged) move = TEMPLATE_STRIKE;
-            performAttack(this, target, move, null);
-        }
-    }
 
     enum Outcome { WIN, LOSE, FLED }
 
