@@ -366,6 +366,25 @@ public class randomizedrpg {
     static final Move POUNCE = new Move("Pounce", 22, 0.70, Element.SLASH);
 
     // ---------------- Forest enemies ----------------
+    static Fighter[] spawnEncounter(EnemyType type) {
+        int count = type.groupMin + (type.groupMax > type.groupMin ? RNG.nextInt(type.groupMax - type.groupMin + 1) : 0);
+        int total = count + (type.escort != null ? (type.escortMin + (type.escortMax > type.escortMin ? RNG.nextInt(type.escortMax - type.escortMin + 1) : 0)) : 0);
+        Fighter[] group = new Fighter[total];
+        int idx = 0;
+        for (int i = 0; i < count; i++) {
+            String suffix = count > 1 ? String.valueOf((char)('A' + i)) : "";
+            group[idx++] = type.spawn(suffix);
+        }
+        if (type.escort != null) {
+            int escCount = total - count;
+            for (int i = 0; i < escCount; i++) {
+                String suffix = escCount > 1 ? String.valueOf((char)('A' + i)) : "";
+                group[idx++] = type.escort.spawn(suffix);
+            }
+        }
+        return group;
+    }
+
     static class EnemyType {
         final String name;
         final int hp;
@@ -636,7 +655,7 @@ public class randomizedrpg {
             case 1: return new FrostfangPhantom();
             case 2: return new SteelscaleWyvern();
             case 3: return new CalamitatumRex();
-            default: return new placeholder();
+            default: throw new IllegalArgumentException("Unknown locale index: " + localeIndex);
         }
     }
 
@@ -1864,11 +1883,6 @@ public class randomizedrpg {
         System.out.println(LINE);
         System.out.println("==================CREDITS=================");
         System.out.println(LINE);
-        System.out.println("BSIT-1B Group 8");
-        System.out.println("Dhereck Kharl");
-        System.out.println("Andrei Thomas Lumaking");
-        System.out.println("James V. Tiglao");
-        System.out.println("Paulene Nicole Yumul");
     }
 
     // ==================================================================
@@ -3072,7 +3086,7 @@ public class randomizedrpg {
 
         // 3. Flat reductions, applied after damage is calculated
         int defense = Math.max(0, defender.defense() - attacker.armorPen());   // 1 defense ignored per Armor Pen
-        int conDeduction = (int) Math.round(1.5 * defender.totalStat(CON));    // 1.5 per point of TOTAL Con
+        int conDeduction = (int) Math.round(1.2 * defender.totalStat(CON));    // 1.2 per point of TOTAL Con
         int reduction = defender.damageReduction();                            // capped at 10
         damage -= defense + conDeduction + reduction;
         int finalDamage = Math.max(1, (int) Math.round(damage));
