@@ -45,6 +45,15 @@ public class randomizedrpg {
     static final int STAT_GAIN_MIN = 1;           // clearing a locale: +1..+6 on every stat
     static final int STAT_GAIN_MAX = 6;
 
+    // Enemy scaling (see enemyDifficulty / scaleEnemy)
+    static final double AVERAGE_ROLL_POWER = 48.65;    // combat power of an average starting roll
+    static final double LEVEL_SCALING = 0.07;          // enemies get this much tougher per player level
+    static final double ROLL_WEIGHT_START = 0.15;      // how strongly the starting roll bends enemy strength at level 1...
+    static final double ROLL_WEIGHT_PER_LEVEL = 0.02;  // ...growing by this much per level...
+    static final double ROLL_WEIGHT_MAX = 0.40;        // ...up to this cap
+    static final double STAT_SCALE = 0.70;             // share of the HP scaling that also applies to enemy STR / CON
+    static final double BOSS_SCALE = 1.00;             // bosses scale at this fraction of normal enemies
+
     // ==================================================================
     // Elements, statuses, positions
     // ==================================================================
@@ -339,10 +348,37 @@ public class randomizedrpg {
         // Magic staff: ranged, and its attacks are magic (they scale with Intelligence).
         new Weapon("Arcane Staff", null, true, 2, 120,
                 new Move("Arcane Bolt", 10, 0.95, null, true, 0, false),
+                new Move("Concentrated Beam", 18, 0.80, Element.PIERCE, true, 0, false), // magic-scaling pierce
+                new Move("Galeslash", 14, 0.95, Element.SLASH, true, 0, false),          // magic-scaling slash
                 new Move("Flame Burst", 15, 0.85, Element.FIRE, true, 0, false),
                 new Move("Frost Spike", 15, 0.85, Element.ICE, true, 0, false),
-                new Move("Spark", 14, 0.90, Element.LIGHTNING, true, 0, false))
+                new Move("Spark", 14, 0.90, Element.LIGHTNING, true, 0, false)),
+        new Weapon("Katana", Element.SLASH, 2, 160,
+                new Move("Quick Draw", 12, 0.95, Element.SLASH),
+                new Move("Crescent Cut", 17, 0.88, Element.SLASH),
+                new Move("Moonfall", 25, 0.72, Element.SLASH)),
+        new Weapon("Warhammer", Element.BLUNT, 4, 170,
+                new Move("Pound", 16, 0.85, Element.BLUNT),
+                new Move("Quake", 22, 0.75, Element.BLUNT),
+                new Move("Earthshatter", 30, 0.60, Element.BLUNT)),
+        new Weapon("Crossbow", Element.PIERCE, true, 4, 180,
+                new Move("Bolt", 12, 0.95, Element.PIERCE),
+                new Move("Heavy Bolt", 20, 0.82, Element.PIERCE),
+                new Move("Armor Piercer", 26, 0.70, Element.PIERCE)),
+        new Weapon("Crystal Wand", null, true, 1, 140,
+                new Move("Crystal Shard", 12, 0.98, null, true, 0, false),
+                new Move("Ember", 14, 0.92, Element.FIRE, true, 0, false),
+                new Move("Frost Needle", 14, 0.92, Element.ICE, true, 0, false),
+                new Move("Thunderclap", 18, 0.80, Element.LIGHTNING, true, 0, false)),
+        new Weapon("Tempest Scepter", null, true, 3, 260,
+                new Move("Gale Edge", 19, 0.90, Element.SLASH, true, 0, false),
+                new Move("Piercing Ray", 22, 0.85, Element.PIERCE, true, 0, false),
+                new Move("Storm Surge", 26, 0.75, Element.LIGHTNING, true, 0, false),
+                new Move("Inferno", 24, 0.78, Element.FIRE, true, 0, false))
     };
+
+    static final int SWORD_INDEX = 0;   // starting physical weapon (Iron Sword)
+    static final int STAFF_INDEX = 6;   // starting magic weapon (Arcane Staff)
 
     static final Armor[] ARMORS = {
         new Armor("Leather Set", 2, 1, null, false, false, false, 60, statBlock(0, 1, 0, 0, 0, 0)),
@@ -351,7 +387,11 @@ public class randomizedrpg {
         new Armor("Frostguard Mail", 7, 5, Element.ICE, false, true, false, 240, statBlock(0, 0, 2, 0, 0, 0)),
         new Armor("Stormguard Mail", 7, 5, Element.LIGHTNING, false, false, true, 250, statBlock(0, 1, 1, 0, 0, 0)),
         new Armor("Knight's Plate", 8, 6, Element.BLUNT, false, false, false, 260, statBlock(1, -1, 2, 0, 0, 0)),
-        new Armor("Dragonscale Set", 12, 10, Element.FIRE, true, false, false, 520, statBlock(2, 0, 2, 1, 0, 0))
+        new Armor("Dragonscale Set", 12, 10, Element.FIRE, true, false, false, 520, statBlock(2, 0, 2, 1, 0, 0)),
+        new Armor("Hunter's Hide", 3, 2, null, false, false, false, 100, statBlock(0, 2, 0, 0, 0, 0)),
+        new Armor("Scale Mail", 6, 3, Element.PIERCE, false, false, false, 190, statBlock(0, 0, 1, 0, 0, 0)),
+        new Armor("Mage Robes", 1, 0, null, false, false, false, 150, statBlock(0, 0, 0, 3, 1, 1)),
+        new Armor("Warden Plate", 10, 7, null, false, false, false, 420, statBlock(1, -2, 2, 0, 0, 0))
     };
 
     // ---------------- Cockatrice (boss) moves ----------------
@@ -366,7 +406,7 @@ public class randomizedrpg {
     static final Move POUNCE = new Move("Pounce", 22, 0.70, Element.SLASH);
 
     // ---------------- Forest enemies ----------------
-    static Fighter[] spawnEncounter(EnemyType type) {
+    static Fighter[] spawnEncounter(EnemyType type, Player p) {
         int count = type.groupMin + (type.groupMax > type.groupMin ? RNG.nextInt(type.groupMax - type.groupMin + 1) : 0);
         int total = count + (type.escort != null ? (type.escortMin + (type.escortMax > type.escortMin ? RNG.nextInt(type.escortMax - type.escortMin + 1) : 0)) : 0);
         Fighter[] group = new Fighter[total];
@@ -382,7 +422,63 @@ public class randomizedrpg {
                 group[idx++] = type.escort.spawn(suffix);
             }
         }
+        for (int i = 0; i < group.length; i++) {
+            scaleEnemy(group[i], p, 1.0);
+        }
         return group;
+    }
+
+    // ------------------------------------------------------------------
+    // Enemy scaling
+    // ------------------------------------------------------------------
+
+    /** Offense + toughness + speed from BASE scores (gear is left out, so buying armor stays rewarding). */
+    static double combatPower(int[] scores) {
+        return 2.0 * Math.max(scores[STR], scores[INT]) + 1.5 * scores[CON] + 0.5 * scores[DEX];
+    }
+
+    /** 1.0 = average starting roll, below 1.0 = poor roll, above 1.0 = great roll. */
+    static double rollRating(int[] scores) {
+        return combatPower(scores) / AVERAGE_ROLL_POWER;
+    }
+
+    static String rollLabel(double rating) {
+        if (rating < 0.70) return "Poor";
+        if (rating < 0.90) return "Below average";
+        if (rating < 1.10) return "Average";
+        if (rating < 1.30) return "Good";
+        return "Excellent";
+    }
+
+    /**
+     * Enemy strength multiplier for this player.
+     *  - Level: enemies grow a little with every player level, so grinding never makes the game easier.
+     *  - Starting roll: a good roll makes enemies somewhat stronger, a poor roll somewhat weaker. The effect starts
+     *    small (good rolls enjoy an easier early game, poor rolls still struggle) and grows with level (good rolls
+     *    can't stomp the late game, poor rolls get breathing room).
+     */
+    static double enemyDifficulty(Player p) {
+        int level = p.level();
+        double levelScale = 1.0 + LEVEL_SCALING * (level - 1);
+        double weight = Math.min(ROLL_WEIGHT_MAX, ROLL_WEIGHT_START + ROLL_WEIGHT_PER_LEVEL * (level - 1));
+        double rating = Math.max(0.35, Math.min(1.65, p.rollRating));
+        return Math.max(0.5, levelScale * (1.0 + weight * (rating - 1.0)));
+    }
+
+    /** Scales a freshly spawned enemy to the player (strength 1.0 = normal enemy, BOSS_SCALE for bosses). */
+    static void scaleEnemy(Fighter e, Player p, double strength) {
+        double k = 1.0 + (enemyDifficulty(p) - 1.0) * strength;
+        double statK = 1.0 + (k - 1.0) * STAT_SCALE;
+        e.maxHp = Math.max(1, (int) Math.round(e.maxHp * k));
+        e.hp = e.maxHp;
+        e.scores[STR] = Math.max(1, (int) Math.round(e.scores[STR] * statK));
+        e.scores[CON] = Math.max(1, (int) Math.round(e.scores[CON] * statK));
+        e.goldReward = (int) Math.round(e.goldReward * (1.0 + (k - 1.0) * 0.5));
+        if (e instanceof Boss) {
+            for (BodyPart bp : ((Boss) e).parts) {
+                bp.scale(k);
+            }
+        }
     }
 
     static class EnemyType {
@@ -572,21 +668,21 @@ public class randomizedrpg {
             MoveTag.BREATH, 1, 1, Status.FROSTBITE, 0.20);
 
     // ---------------- Stormspire enemies ----------------
-    static final EnemyType STORMFEATHER_EAGLE = new EnemyType("Stormfeather Eagle", 95, statBlock(8, 18, 5, 3, 7, 10), 0, 0, 1,
+    static final EnemyType STORMFEATHER_EAGLE = new EnemyType("Stormfeather Eagle", 115, statBlock(9, 18, 5, 3, 7, 10), 0, 0, 1,
             Element.ICE, Element.LIGHTNING,
             new Weapon("Storm Talons", Element.SLASH, 0, 0,
                     new Move("Talon Rake", 13, 0.90, Element.SLASH, Status.BLEED, 0.20),
                     new Move("Static Dive", 17, 0.75, Element.LIGHTNING, Status.STATIC, 0.20)),
             22, 34, 1, 2, null, 0, 0);
 
-    static final EnemyType STONE_GOLEM = new EnemyType("Stone Golem", 220, statBlock(10, 3, 9, 2, 4, 8), 6, 2, 2,
+    static final EnemyType STONE_GOLEM = new EnemyType("Stone Golem", 250, statBlock(11, 3, 9, 2, 4, 8), 6, 2, 2,
             Element.ICE, Element.SLASH,
             new Weapon("Stone Fists", Element.BLUNT, 0, 0,
                     new Move("Slam", 14, 0.85, Element.BLUNT),
                     new Move("Crush", 22, 0.60, Element.BLUNT)),
             45, 65);
 
-    static final EnemyType STORMHIDE_ELK = new EnemyType("Stormhide Elk", 190, statBlock(12, 11, 10, 3, 6, 8), 4, 0, 0,
+    static final EnemyType STORMHIDE_ELK = new EnemyType("Stormhide Elk", 220, statBlock(13, 11, 10, 3, 6, 8), 4, 0, 0,
             Element.BLUNT, Element.LIGHTNING,
             new Weapon("Stormhide Antlers", Element.PIERCE, 0, 0,
                     new Move("Gore", 18, 0.80, Element.PIERCE),
@@ -663,9 +759,9 @@ public class randomizedrpg {
     // Inventory (arrays only): stackable consumables, owned weapons, owned armor
     // ==================================================================
     static class Inventory {
-        static final int ITEM_SLOTS = 12;
-        static final int WEAPON_SLOTS = 10;
-        static final int ARMOR_SLOTS = 8;
+        static final int ITEM_SLOTS = ITEMS.length;
+        static final int WEAPON_SLOTS = WEAPONS.length;
+        static final int ARMOR_SLOTS = ARMORS.length;
 
         final Item[] items = new Item[ITEM_SLOTS];
         final int[] counts = new int[ITEM_SLOTS];
@@ -901,6 +997,8 @@ public class randomizedrpg {
         int gold = STARTING_GOLD;
         int killsSinceBoss = 0;
         int bossesDefeated = 0;
+        int victories = 0;                               // victorious battles; every victory is a level up
+        double rollRating = 1.0;                         // how good the starting stat roll was (1.0 = average)
         int locale = 0;                                  // index into LOCALES
         final boolean[] cleared = new boolean[LOCALES.length];
         int skillPoints = 0;                             // 1 per victorious battle, spent on stats
@@ -916,6 +1014,11 @@ public class randomizedrpg {
             this.inventory = inventory;
             recalcMaxHp();
             hp = maxHp;
+        }
+
+        /** Level 1 at the start; +1 for every victorious battle. */
+        int level() {
+            return 1 + victories;
         }
 
         /** Constitution -> HP bonus (none if the modifier is 0 or negative). Uses base Constitution. */
@@ -952,7 +1055,7 @@ public class randomizedrpg {
     // ==================================================================
     static class BodyPart {
         final String name;
-        final int maxHp;
+        int maxHp;
         int hp;
         final Element[] weakTo;
         boolean known = false;
@@ -966,6 +1069,12 @@ public class randomizedrpg {
 
         boolean broken() {
             return hp <= 0;
+        }
+
+        /** Enemy scaling: resizes this part's health. */
+        void scale(double k) {
+            maxHp = Math.max(1, (int) Math.round(maxHp * k));
+            hp = maxHp;
         }
 
         boolean isWeakTo(Element e) {
@@ -1541,9 +1650,9 @@ public class randomizedrpg {
             if (move == THUNDER_CLOAK) {
                 cloakTurns = 3;
                 castCloak = true;
-                System.out.println("The Wyvern wraps itself in crackling lightning - THUNDER CLOAK!");
-                System.out.println("  (its physical attacks turn LIGHTNING and hit 10% harder, Railgun hits 20% harder,");
-                System.out.println("   and melee hits on it may shock you - for 3 turns)");
+                say("The Wyvern wraps itself in crackling lightning - THUNDER CLOAK!",
+                    "  (its physical attacks turn LIGHTNING and hit 10% harder, Railgun hits 20% harder,",
+                    "   and melee hits on it may shock you - for 3 turns)");
             } else {
                 performAttack(this, target, move, null);
             }
@@ -1739,6 +1848,11 @@ public class randomizedrpg {
         }
     }
 
+    /** Prints each line. */
+    static void say(String... lines) {
+        for (String line : lines) System.out.println(line);
+    }
+
     static void pause() {
         System.out.print("Press Enter to continue...");
         SC.nextLine();
@@ -1759,23 +1873,36 @@ public class randomizedrpg {
         }
 
         Inventory inv = new Inventory();
-        inv.addWeapon(WEAPONS[0]); // Iron Sword
+        Player p = new Player(name, scores, inv);
+        p.armor = ARMORS[0];                 // Leather Set
+        p.rollRating = rollRating(scores);
+
+        // A sharper mind than body starts with a magic weapon instead of a physical one.
+        boolean mage = p.totalStat(INT) > p.totalStat(STR);
+        Weapon starter = WEAPONS[mage ? STAFF_INDEX : SWORD_INDEX];
+        p.weapon = starter;
+
+        inv.addWeapon(starter);
         inv.addArmor(ARMORS[0]);   // Leather Set
         inv.addItem(ITEMS[0], 2);  // 2 Potions
         inv.addItem(ITEMS[2], 1);  // 1 Bomb
         inv.addItem(ITEMS[3], 1);  // 1 Antidote
         inv.addItem(ITEMS[4], 1);  // 1 Water Flask
 
-        Player p = new Player(name, scores, inv);
-        p.weapon = WEAPONS[0];
-        p.armor = ARMORS[0];
         showCharacter(p);
+        if (mage) {
+            System.out.println("Your mind outshines your body (INT " + p.totalStat(INT) + " > STR " + p.totalStat(STR)
+                    + "): you start with the " + starter.name + ", a magic weapon.");
+        } else {
+            System.out.println("You start with the " + starter.name + ".");
+        }
         return p;
     }
 
     static void showCharacter(Player p) {
         System.out.println(LINE);
         System.out.println("Character Name: " + p.name);
+        System.out.println("Level: " + p.level() + "    Starting roll: " + rollLabel(p.rollRating) + String.format(" (%.2f)", p.rollRating));
         System.out.println("HP: " + p.hp + "/" + p.maxHp + "    Gold: " + p.gold);
         System.out.println("Weapon: " + p.weapon.name + "    Armor: " + (p.armor == null ? "None" : p.armor.name));
         System.out.println(LINE);
@@ -1810,84 +1937,91 @@ public class randomizedrpg {
     }
 
     static void showMechanics() {
-        System.out.println(LINE);
-        System.out.println("BASE STATS (modifier = floor((total - 10) / 2)):");
-        System.out.println("Strength -> +2 damage per point of TOTAL Strength (physical attacks)");
-        System.out.println("Dexterity -> Higher TOTAL Dex acts first; modifier gives +2% hit/retreat chance per point;");
-        System.out.println("                1% evasion per point of TOTAL Dex (see Dodge)");
-        System.out.println("Constitution -> -1.5 damage taken per point of TOTAL Con (rounded);");
-        System.out.println("                +5 max HP and +1 HP regen per turn per positive modifier point");
-        System.out.println("                (no bonus if the modifier is 0 or negative; poison stops regen)");
-        System.out.println("Intelligence -> +2 damage per point for magic; detects weaknesses faster;");
-        System.out.println("                +5% skill learn chance per point; makes items stronger");
-        System.out.println("Wisdom -> Improves item finds while exploring");
-        System.out.println("Luck -> Increases critical chance (1% base, +1% per positive modifier point)");
-        System.out.println(LINE);
-        System.out.println("DAMAGE ORDER:");
-        System.out.println("move power + roll + 2 x stat, then position, Charge (x2), crit (x2),");
-        System.out.println("weakness (x1.5) / resistance (x0.5) and guard (x0.5).");
-        System.out.println("Then flat reductions: Defense (minus attacker Armor Pen), Con deduction,");
+        say(LINE,
+            "BASE STATS (modifier = floor((total - 10) / 2)):",
+            "Strength -> +2 damage per point of TOTAL Strength (physical attacks)",
+            "Dexterity -> Higher TOTAL Dex acts first; modifier gives +2% hit/retreat chance per point;",
+            "                1% evasion per point of TOTAL Dex (see Dodge)",
+            "Constitution -> -1.5 damage taken per point of TOTAL Con (rounded);",
+            "                +5 max HP and +1 HP regen per turn per positive modifier point",
+            "                (no bonus if the modifier is 0 or negative; poison stops regen)",
+            "Intelligence -> +2 damage per point for magic; detects weaknesses faster;",
+            "                +5% skill learn chance per point; makes items stronger",
+            "Wisdom -> Improves item finds while exploring",
+            "Luck -> Increases critical chance (1% base, +1% per positive modifier point)",
+            LINE,
+            "DAMAGE ORDER:",
+            "move power + roll + 2 x stat, then position, Charge (x2), crit (x2),",
+            "weakness (x1.5) / resistance (x0.5) and guard (x0.5).",
+            "Then flat reductions: Defense (minus attacker Armor Pen), Con deduction,");
         System.out.println("and Damage Reduction (max " + MAX_DAMAGE_REDUCTION + "). Every hit deals at least 1.");
-        System.out.println(LINE);
-        System.out.println("DAMAGE TYPES:");
-        System.out.println("Weapons deal physical damage (scales with Strength): SLASH, PIERCE or BLUNT.");
-        System.out.println("Each weapon has a main type, but individual moves can differ.");
-        System.out.println("Magic skills deal FIRE, ICE or LIGHTNING (scales with Intelligence).");
-        System.out.println(LINE);
-        System.out.println("STATUS EFFECTS (they wear off after battle; 20% chance to fade each turn):");
-        System.out.println("Bleed -> -2 HP per turn, +1 more each turn it lasts. Cured by Potions.");
-        System.out.println("Poison -> -4 HP per turn and no HP regen. Cured by Antidotes.");
-        System.out.println("Burn -> -3 HP per turn, defense -15% (-25% and +5 damage if weak to fire).");
-        System.out.println("        Cured by Water Flasks. Fireproof armor is immune.");
-        System.out.println("Frostbite -> -2 HP per turn and Dexterity -10%. Cured by Warm Drinks.");
-        System.out.println("        Iceproof armor (or an ICE resistance) is immune.");
-        System.out.println("Static -> -1 HP per turn, 30% chance each turn to be paralyzed and lose the turn.");
-        System.out.println("        Cured by Warm Drinks. Insulated armor (or a LIGHTNING resistance) is immune.");
-        System.out.println("Fireproof armor / a FIRE resistance blocks burning too.");
-        System.out.println(LINE);
-        System.out.println("COMBAT:");
-        System.out.println("Attack -> Weapon moves, Charge, and learned skills (limited uses per battle)");
-        System.out.println("Charge -> No damage; your next attack that lands deals double damage");
-        System.out.println("Guard -> Halves the next hit you take");
-        System.out.println("Dodge -> Triples your evasion until your next turn (lasts as long as Guard)");
-        System.out.println("Item -> Potions, thrown items (15 damage + 30% status), cures, Shock Trap,");
-        System.out.println("        Smoke Bomb (enemy attacks miss for 2 turns) and Flashbomb (enemy accuracy -30%).");
-        System.out.println("        Smoke Bomb and Flashbomb have a 5 turn cooldown once their effect ends.");
-        System.out.println("Ranged weapons -> The bow and staff ignore the Back position's damage penalty.");
-        System.out.println("Staff -> Its attacks are magic: they scale with Intelligence.");
-        System.out.println("Position -> Front hits harder but takes more; Back is safer but weaker");
-        System.out.println("Retreat -> Chance to flee the fight");
-        System.out.println("Fights can have several enemies; everyone acts in order of Dexterity.");
-        System.out.println("Enemies have hidden weaknesses/resistances. Hitting them reveals them,");
-        System.out.println("and Intelligence helps you spot them each turn.");
-        System.out.println(LINE);
-        System.out.println("LOCALES:");
+        say(LINE,
+            "DAMAGE TYPES:",
+            "Weapons deal physical damage (scales with Strength): SLASH, PIERCE or BLUNT.",
+            "Each weapon has a main type, but individual moves can differ.",
+            "Magic skills deal FIRE, ICE or LIGHTNING (scales with Intelligence).",
+            LINE,
+            "STATUS EFFECTS (they wear off after battle; 20% chance to fade each turn):",
+            "Bleed -> -2 HP per turn, +1 more each turn it lasts. Cured by Potions.",
+            "Poison -> -4 HP per turn and no HP regen. Cured by Antidotes.",
+            "Burn -> -3 HP per turn, defense -15% (-25% and +5 damage if weak to fire).",
+            "        Cured by Water Flasks. Fireproof armor is immune.",
+            "Frostbite -> -2 HP per turn and Dexterity -10%. Cured by Warm Drinks.",
+            "        Iceproof armor (or an ICE resistance) is immune.",
+            "Static -> -1 HP per turn, 30% chance each turn to be paralyzed and lose the turn.",
+            "        Cured by Warm Drinks. Insulated armor (or a LIGHTNING resistance) is immune.",
+            "Fireproof armor / a FIRE resistance blocks burning too.",
+            LINE,
+            "COMBAT:",
+            "Attack -> Weapon moves, Charge, and learned skills (limited uses per battle)",
+            "Charge -> No damage; your next attack that lands deals double damage",
+            "Guard -> Halves the next hit you take",
+            "Dodge -> Triples your evasion until your next turn (lasts as long as Guard)",
+            "Item -> Potions, thrown items (15 damage + 30% status), cures, Shock Trap,",
+            "        Smoke Bomb (enemy attacks miss for 2 turns) and Flashbomb (enemy accuracy -30%).",
+            "        Smoke Bomb and Flashbomb have a 5 turn cooldown once their effect ends.",
+            "Ranged weapons -> The bow and staff ignore the Back position's damage penalty.",
+            "Staff -> Magic attacks (Intelligence), including Concentrated Beam (pierce) and Galeslash (slash).",
+            "        You start with the staff instead of the sword if your total INT beats your total STR.",
+            "Position -> Front hits harder but takes more; Back is safer but weaker",
+            "Retreat -> Chance to flee the fight",
+            "Fights can have several enemies; everyone acts in order of Dexterity.",
+            "Enemies have hidden weaknesses/resistances. Hitting them reveals them,",
+            "and Intelligence helps you spot them each turn.",
+            LINE,
+            "LOCALES:");
         System.out.println("Each locale has its own enemies. After every " + BOSS_INTERVAL + " enemies you defeat, its boss");
         System.out.println("appears on your next explore. Attack its body parts: damage to a part also drains");
         System.out.println("its main HP, and breaking parts weakens the boss.");
         System.out.println("Defeating a boss clears the locale: +" + STAT_GAIN_MIN + " to +" + STAT_GAIN_MAX + " on EVERY stat (rolled per stat),");
-        System.out.println("and you move on to the next locale.");
-        System.out.println("Forest -> Snowy Peaks -> Stormspire -> The Calamitous Alatar (final boss only).");
-        System.out.println("Beat the Calamitatum Rex to finish the game.");
-        System.out.println(LINE);
-        System.out.println("SKILL POINTS:");
-        System.out.println("You earn 1 skill point per victorious battle and choose which stat to raise.");
-        System.out.println(LINE);
-        System.out.println("EXPLORING:");
-        System.out.println("[1] Nothing happens  [2] You find an item  [3] A fight begins  [4] A shop appears");
-        System.out.println("Defeating enemies earns gold. Spend it at shops on items, weapons, armor,");
-        System.out.println("spellbooks (magic) and scrolls (physical) to learn skills.");
+        say("and you move on to the next locale.",
+            "Forest -> Snowy Peaks -> Stormspire -> The Calamitous Alatar (final boss only).",
+            "Beat the Calamitatum Rex to finish the game.",
+            LINE,
+            "LEVELS AND ENEMY SCALING:",
+            "Every victorious battle is a level up. Enemies grow tougher as you level, so",
+            "grinding never makes the game trivial. A poor starting stat roll makes the early game",
+            "harder, but enemies ease off a little as you level; a great roll makes the early game",
+            "easier, but enemies push back harder in the late game. Gear is never counted.",
+            LINE,
+            "SKILL POINTS:",
+            "You earn 1 skill point per victorious battle and choose which stat to raise.",
+            LINE,
+            "EXPLORING:",
+            "[1] Nothing happens  [2] You find an item  [3] A fight begins  [4] A shop appears",
+            "Defeating enemies earns gold. Spend it at shops on items, weapons, armor,",
+            "spellbooks (magic) and scrolls (physical) to learn skills.");
     }
 
     static void showCredits() {
-        System.out.println(LINE);
-        System.out.println("                  CREDITS                 ");
-        System.out.println(LINE);
-        System.out.println("BSIT-1B Group 8");
-        System.out.println("Dhereck Kharl");
-        System.out.println("Andrei Thomas Lumaking");
-        System.out.println("James V. Tiglao");
-        System.out.println("Paulene Nicole Yumul");
+        say(LINE,
+            "                  CREDITS                 ",
+            LINE);
+            System.out.println("BSIT-1B Group 8");
+            System.out.println("Dhereck Kharl Diciembre");
+            System.out.println("Andrei Thomas Lumaking");
+            System.out.println("James Tiglao");
+            System.out.println("Paulene Nicole Yumul");
     }
 
     // ==================================================================
@@ -1898,7 +2032,7 @@ public class randomizedrpg {
         while (inGame && p.isAlive() && !p.gameComplete) {
             Locale here = LOCALES[p.locale];
             System.out.println(LINE);
-            System.out.printf("ADVENTURE (%s) - %s   HP %d/%d   Gold %d%n", here.name, p.name, p.hp, p.maxHp, p.gold);
+            System.out.printf("ADVENTURE (%s) - %s   Lv %d   HP %d/%d   Gold %d%n", here.name, p.name, p.level(), p.hp, p.maxHp, p.gold);
             String progress = p.cleared[p.locale] ? "Locale cleared"
                     : here.bossOnly ? "The boss awaits"
                     : "Boss in: " + Math.max(0, BOSS_INTERVAL - p.killsSinceBoss) + " kills";
@@ -1968,6 +2102,7 @@ public class randomizedrpg {
         // The boss ambushes you once enough enemies have fallen (until its locale is cleared).
         if ((p.killsSinceBoss >= BOSS_INTERVAL || LOCALES[p.locale].bossOnly) && !p.cleared[p.locale]) {
             Boss boss = createBoss(p.locale);
+            scaleEnemy(boss, p, BOSS_SCALE);
             System.out.println(boss.introText());
             resolveFight(p, new Fighter[] { boss }, true);
             return;
@@ -1996,7 +2131,7 @@ public class randomizedrpg {
                 shop(p);
                 break;
             default:
-                resolveFight(p, spawnEncounter(here.enemies[RNG.nextInt(here.enemies.length)]), false);
+                resolveFight(p, spawnEncounter(here.enemies[RNG.nextInt(here.enemies.length)], p), false);
                 break;
         }
     }
@@ -2029,8 +2164,9 @@ public class randomizedrpg {
             p.heal(recovered);
             System.out.println("\nVictory!");
             System.out.println("You loot " + gold + " gold (total " + p.gold + ") and recover " + recovered + " HP.");
+            p.victories++;
             p.skillPoints++;
-            System.out.println("You earned 1 skill point!");
+            System.out.println("LEVEL UP! You are now level " + p.level() + " and earned 1 skill point!");
             spendSkillPoints(p);
         }
 
@@ -2065,9 +2201,9 @@ public class randomizedrpg {
         // Clearing the last locale finishes the game.
         if (p.locale + 1 >= LOCALES.length) {
             System.out.println();
-            System.out.println(LINE);
-            System.out.println("Congratulations on beating the game! We hope you enjoyed playing it as much as we enjoyed making it.");
-            System.out.println(LINE);
+            say(LINE,
+                "Congratulations on beating the game! We hope you enjoyed playing it as much as we enjoyed making it.",
+                LINE);
             p.gameComplete = true;
             pause();
             return;
@@ -2206,9 +2342,9 @@ public class randomizedrpg {
     static void equipmentMenu(Player p) {
         Inventory inv = p.inventory;
         while (true) {
-            System.out.println(LINE);
-            System.out.println("EQUIPMENT");
-            System.out.println("Weapons:");
+            say(LINE,
+                "EQUIPMENT",
+                "Weapons:");
             for (int i = 0; i < inv.weaponCount; i++) {
                 Weapon w = inv.weapons[i];
                 System.out.printf("  [%d] %s%s  [%s, Armor Pen %d]%n", i + 1, w.name, w == p.weapon ? " (equipped)" : "", w.label(), w.armorPen);
@@ -3187,19 +3323,19 @@ public class randomizedrpg {
         Player current = null; // kept in memory while the program is open
         boolean running = true;
         while (running) {
-            System.out.println(LINE);
-            System.out.println("                MAIN MENU                 ");
-            System.out.println(LINE);
+            say(LINE,
+                "                MAIN MENU                 ",
+                LINE);
             if (current != null) {
                 System.out.printf("Current character: %s (HP %d/%d, %d gold)%n", current.name, current.hp, current.maxHp, current.gold);
                 System.out.println(LINE);
             }
-            System.out.println("OPTIONS");
-            System.out.println("[1] NEW GAME");
-            System.out.println("[2] CONTINUE");
-            System.out.println("[3] GAMEPLAY MECHANICS");
-            System.out.println("[4] CREDITS");
-            System.out.println("[0] QUIT");
+            say("OPTIONS",
+                "[1] NEW GAME",
+                "[2] CONTINUE",
+                "[3] GAMEPLAY MECHANICS",
+                "[4] CREDITS",
+                "[0] QUIT");
             System.out.println();
             System.out.println("Please select an option:");
 
